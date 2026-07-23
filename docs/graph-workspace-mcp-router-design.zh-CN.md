@@ -22,6 +22,10 @@
 - 北向是 MCP Server，为 Codex、Claude、IDE 等客户端提供统一工具。
 - 南向是 MCP Client，通过 MCP Streamable HTTP 调用本地或远程 GitNexus MCP 节点。
 
+GitNexus 保留现有 stdio MCP Server，由成熟、可替换的第三方 mcp-proxy 将其适配为
+Streamable HTTP endpoint。对 GraphGateway 而言，`mcp-proxy + GitNexus stdio MCP`
+共同构成一个逻辑 GitNexus MCP Node。
+
 本地和远程节点使用相同协议与能力模型，区别只体现在地址、认证、延迟和权限上。
 
 ## 2. 设计目标
@@ -35,6 +39,8 @@
 - 保证结果携带仓库、分支、generation 和节点来源。
 - 将写操作限制在 Workspace 的本地 `primary` Source。
 - 允许路由模块与 GitNexus 节点分别部署、分别升级。
+- 复用 GitNexus 现有 stdio MCP，避免在 GitNexus 内重复实现 HTTP Transport。
+- 保持对具体 mcp-proxy 产品无依赖，允许独立替换代理实现。
 - 复用 GitNexus 已有 `query`、`context`、`impact`、Group 等能力。
 
 ### 2.2 非目标
@@ -45,6 +51,7 @@
 - 第一阶段不实现 PR 图谱和任意 Commit 图谱。
 - 第一阶段不允许修改远程、依赖或基线 Source。
 - 不要求所有查询都广播到 Workspace 的所有成员。
+- 不要求 GitNexus 第一阶段原生实现 Streamable HTTP Transport。
 
 ## 3. 核心概念
 
@@ -61,6 +68,7 @@ Graph Source 表示一个可查询的代码图谱来源：
   "location": "local",
   "endpoint": "http://127.0.0.1:38471/mcp",
   "transport": "streamable-http",
+  "adapter": "mcp-proxy",
   "writable": true
 }
 ```
@@ -159,14 +167,28 @@ flowchart TB
         Merger --> Provenance
     end
 
-    Local["Local GitNexus MCP<br/>Streamable HTTP"]
-    RemoteA["Remote GitNexus MCP A<br/>Streamable HTTP"]
-    RemoteB["Remote GitNexus MCP B<br/>Streamable HTTP"]
+    subgraph LocalNode["Local GitNexus MCP Node"]
+        LocalProxy["mcp-proxy<br/>Streamable HTTP"]
+        LocalMCP["GitNexus MCP<br/>stdio"]
+        LocalProxy --> LocalMCP
+    end
+
+    subgraph RemoteNodeA["Remote GitNexus MCP Node A"]
+        RemoteProxyA["mcp-proxy<br/>Streamable HTTP"]
+        RemoteMCPA["GitNexus MCP<br/>stdio"]
+        RemoteProxyA --> RemoteMCPA
+    end
+
+    subgraph RemoteNodeB["Remote GitNexus MCP Node B"]
+        RemoteProxyB["mcp-proxy<br/>Streamable HTTP"]
+        RemoteMCPB["GitNexus MCP<br/>stdio"]
+        RemoteProxyB --> RemoteMCPB
+    end
 
     Client -->|"MCP Streamable HTTP"| North
-    Dispatcher -->|"MCP Client"| Local
-    Dispatcher -->|"MCP Client"| RemoteA
-    Dispatcher -->|"MCP Client"| RemoteB
+    Dispatcher -->|"MCP Client"| LocalProxy
+    Dispatcher -->|"MCP Client"| RemoteProxyA
+    Dispatcher -->|"MCP Client"| RemoteProxyB
     Provenance --> Client
 ```
 
@@ -183,7 +205,7 @@ flowchart TB
 - 结果去重、排序、聚合和来源装饰。
 - 审计与可观测性。
 
-### 4.2 GitNexus MCP 节点负责
+### 4.2 GitNexus stdio MCP 负责
 
 - 仓库、分支和 generation 管理。
 - 增量或全量索引。
@@ -192,7 +214,19 @@ flowchart TB
 - 返回 generation 状态与 freshness。
 - 提供 Group 合约、拓扑或跨仓关系数据。
 
-### 4.3 Router 不直接处理
+### 4.3 mcp-proxy 负责
+
+- 在 Streamable HTTP 与 stdio MCP 之间进行透明协议适配。
+- 建立、维护和回收下游 MCP Session。
+- 启动、监控和终止 GitNexus stdio 子进程。
+- 处理 HTTP 连接、流式响应、超时和基础健康检查。
+- 透传 tools、resources、prompts、通知和能力协商。
+- 提供认证接入点，或者部署在认证反向代理之后。
+
+mcp-proxy 只负责传输适配，不负责 Workspace、generation 解析、查询规划、结果聚合
+或权限策略。
+
+### 4.4 Router 不直接处理
 
 - LadybugDB 或其他图数据库文件。
 - Parser、语言解析和索引流水线。
@@ -236,7 +270,8 @@ graphgateway://workspace/{id}/view
 
 ### 5.2 南向 MCP
 
-本地和远程 GitNexus 节点通过相同的 Streamable HTTP MCP endpoint 提供：
+本地和远程 GitNexus stdio MCP 通过各自的 mcp-proxy 暴露相同的 Streamable HTTP
+MCP endpoint。GraphGateway 只依赖标准 MCP，不依赖代理实现的私有 API：
 
 ```text
 list_repos
@@ -266,7 +301,8 @@ gitnexus://group/{group}/contracts
 gitnexus://group/{group}/status
 ```
 
-不是所有节点都必须实现全部能力。Router 在初始化阶段保存能力快照，并根据
+不是所有节点都必须实现全部能力。mcp-proxy 必须透明传递能力协商；Router 在
+初始化阶段保存能力快照，并根据
 QueryPlan 判断目标节点是否满足请求。
 
 ## 6. 请求模型
@@ -349,8 +385,8 @@ sequenceDiagram
     participant C as MCP Client
     participant R as GraphGateway Router
     participant W as Workspace Resolver
-    participant L as Local GitNexus MCP
-    participant S as Remote GitNexus MCP
+    participant L as Local mcp-proxy Endpoint
+    participant S as Remote mcp-proxy Endpoint
 
     C->>R: tools/call(query, workspace_id)
     R->>W: resolve workspace and sources
@@ -383,6 +419,9 @@ sequenceDiagram
 9. 对互不依赖的请求并行执行。
 10. 合并、去重并排序。
 11. 附加路由信息、版本向量和警告。
+
+图中的 mcp-proxy endpoint 会将每次 MCP 调用透明转发给对应的 GitNexus stdio MCP。
+Router 不直接感知 stdio 子进程。
 
 ## 9. 工具分发规则
 
@@ -611,6 +650,16 @@ Upstream Session A
 - QueryPlan 使用 `source_id` 查找对应会话。
 - 会话恢复后必须确认 capability snapshot 是否变化。
 
+mcp-proxy 还需要负责 HTTP Session 与 stdio 子进程之间的映射。该映射不能由
+GraphGateway 假定，选型和部署时必须明确以下模型：
+
+- 一个 HTTP Session 启动一个独立 GitNexus stdio 进程。
+- 多个 HTTP Session 共享一个长期运行的 GitNexus stdio 进程。
+- 使用有限大小的 GitNexus stdio 进程池。
+
+如果共享进程，需要验证并发请求和图数据库访问安全；如果每个 Session 独占进程，
+需要评估启动延迟、内存占用和断开后的进程回收。
+
 ## 14. 能力协商
 
 节点可能运行不同版本：
@@ -647,15 +696,18 @@ Router 对外暴露自己能够保证的稳定工具契约。执行前检查所�
 - Router 为每个远程 Source 使用独立凭据。
 - 不将北向 Authorization Header 无条件透传到下游。
 - 认证信息使用外部 Secret Provider，只保存引用。
+- 认证可以由 mcp-proxy 提供，也可以由其前置反向代理提供。
+- mcp-proxy 不得将认证信息写入 GitNexus stdio 或普通日志。
 
-### 15.3 Endpoint 安全
+### 15.3 mcp-proxy Endpoint 安全
 
-- 本地 MCP 默认只监听 `127.0.0.1`。
-- 远程 MCP 必须使用 HTTPS。
+- 本地 mcp-proxy 默认只监听 `127.0.0.1`。
+- 远程 mcp-proxy endpoint 必须使用 HTTPS。
 - 校验 HTTP `Origin`。
 - Source endpoint 必须来自允许列表，防止 SSRF。
 - 限制重定向目标。
 - 对远程节点配置请求大小、响应大小和超时上限。
+- GitNexus 的 MCP stdout 只能输出协议消息，代理日志必须与 stdout 隔离。
 
 ### 15.4 写操作
 
@@ -755,19 +807,20 @@ northbound request
 ```text
 IDE
   → Local GraphGateway Router
-      → Local GitNexus MCP
-      → Remote Baseline MCP
+      → Local mcp-proxy → GitNexus stdio MCP
+      → Remote mcp-proxy → Baseline GitNexus stdio MCP
 ```
 
-Router 和本地 GitNexus 都监听 loopback，远程节点通过 HTTPS 访问。
+Router 和本地 mcp-proxy 都监听 loopback，远程节点通过 HTTPS 访问。GitNexus stdio
+MCP 不单独监听网络端口。
 
 ### 19.2 团队内网
 
 ```text
 Developer IDE
   → Local or Team GraphGateway Router
-      → Developer Local GitNexus MCP
-      → Team Remote GitNexus MCP
+      → Developer mcp-proxy → Local GitNexus stdio MCP
+      → Team mcp-proxy → Remote GitNexus stdio MCP
 ```
 
 如果团队 Router 无法访问开发者 loopback，本地节点需要通过安全隧道或开发者本机
@@ -778,26 +831,174 @@ Router 参与查询，不应直接暴露到公共网络。
 ```text
 AI Platform
   → Server GraphGateway Router Cluster
-      → GitNexus MCP Node A
-      → GitNexus MCP Node B
-      → GitNexus MCP Node C
+      → mcp-proxy A → GitNexus stdio MCP A
+      → mcp-proxy B → GitNexus stdio MCP B
+      → mcp-proxy C → GitNexus stdio MCP C
 ```
 
 Router 实例应尽量无状态。Workspace 配置、会话信息、Source 健康状态可以存入共享
 控制面；下游 MCP 会话由实例管理并允许重建。
 
-## 20. 与 GitNexus 的改造边界
+## 20. mcp-proxy 适配与 GitNexus 改造边界
 
-GitNexus 侧尽量限制为：
+### 20.1 已接受的传输决策
 
-1. 提供标准 MCP Streamable HTTP endpoint。
-2. 查询参数支持明确的 branch 和 generation。
-3. 提供分支、generation 状态与 freshness。
-4. 查询结果携带 repo、branch、generation 和 head SHA。
-5. 明确工具的只读、写入和能力元数据。
-6. 保留现有 LocalBackend、GroupService 和查询实现。
+GitNexus 第一阶段不原生实现 Streamable HTTP Transport，而是继续提供现有 stdio
+MCP Server。成熟的第三方 mcp-proxy 负责将 stdio MCP 适配为 Streamable HTTP：
 
-Workspace、路由、聚合和多节点会话全部由 GraphGateway 实现。
+```text
+GraphGateway
+    │
+    │ MCP Streamable HTTP
+    ▼
+mcp-proxy
+    │
+    │ MCP stdio
+    ▼
+GitNexus MCP Server
+    │
+    ▼
+Code Graph
+```
+
+GraphGateway 只依赖标准 MCP endpoint。具体 mcp-proxy 产品是部署配置，不进入
+Workspace、Source 或 QueryPlan 的业务模型。
+
+### 20.2 三方职责边界
+
+GraphGateway 负责：
+
+- Workspace、Source 和 endpoint 注册。
+- endpoint 与 generation 的稳定绑定。
+- 查询规划、扇出、跨仓聚合和一致性。
+- provenance、写权限和远程凭据。
+- generation 蓝绿切换和旧实例回收决策。
+
+mcp-proxy 负责：
+
+- Streamable HTTP 与 stdio 的协议适配。
+- MCP Session 映射。
+- GitNexus 子进程生命周期。
+- HTTP 连接、流式响应和传输层超时。
+- 能力、工具、资源和通知的透明传递。
+- 可选的认证接入和健康检查。
+
+GitNexus 负责：
+
+- 保留现有 stdio MCP Server。
+- 执行代码索引和图谱查询。
+- 保留 LocalBackend、GroupService 和现有工具语义。
+- 在现有结果不足时补充最小的 status 和 provenance 能力。
+
+mcp-proxy 不能替代 branch/generation 解析、权限策略、来源追踪或跨仓查询聚合。
+
+### 20.3 MVP 节点模型：一实例一 Source/generation
+
+第一阶段推荐让一个逻辑 MCP Node 对应一个明确的 Source/generation：
+
+```text
+payment-service / feature-refund / gen-17
+    └─ mcp-proxy :38117
+        └─ GitNexus stdio MCP
+            └─ immutable graph directory
+```
+
+对应 Source：
+
+```json
+{
+  "source_id": "payment-feature-gen17",
+  "repo_id": "payment-service",
+  "branch": "feature/refund",
+  "generation_id": "gen-17",
+  "head_sha": "abc123",
+  "endpoint": "http://127.0.0.1:38117/mcp",
+  "adapter": "mcp-proxy"
+}
+```
+
+该模型的优点：
+
+- GitNexus 工具第一阶段无需增加统一的 `generation_id` 参数。
+- endpoint 天然绑定不可变版本。
+- 旧 generation 可以继续为在途查询提供只读服务。
+- 本地、基线、依赖和微服务成员使用相同 Source 模型。
+
+代价：
+
+- generation 较多时会增加进程和 endpoint 数量。
+- 需要 Node Manager 控制启动、健康检查、闲置回收和端口分配。
+- 需要限制同时驻留的历史 generation 数量。
+
+### 20.4 后续节点模型：共享多 generation
+
+规模扩大后，可以让一个 GitNexus MCP 实例管理多个 generation：
+
+```text
+mcp-proxy
+    └─ GitNexus stdio MCP
+        ├─ feature-refund / gen-17
+        ├─ feature-refund / gen-18
+        └─ main / gen-42
+```
+
+此时 GitNexus 工具必须显式接受：
+
+```json
+{
+  "repo": "payment-service",
+  "branch": "feature/refund",
+  "generation_id": "gen-17"
+}
+```
+
+共享模型可以减少进程和连接数量，但需要修改 GitNexus 的工具参数、仓库解析和存储
+选择逻辑。因此它不是第一阶段的前置条件。
+
+### 20.5 本地高频更新的蓝绿切换
+
+单仓开发需要避免查询读到正在构建的半成品图谱：
+
+```text
+当前查询
+    → endpoint A → GitNexus instance A / gen-17
+
+后台构建
+    → endpoint B → GitNexus instance B / gen-18
+
+gen-18 ready
+    → GraphGateway 原子切换 Source active endpoint 到 B
+    → A 等待在途请求完成后回收
+```
+
+切换规则：
+
+1. 新 generation 完成索引和健康检查。
+2. GraphGateway 创建新的 Resolved Graph View。
+3. 新查询路由到新 endpoint。
+4. 旧 View 的在途查询继续使用旧 endpoint。
+5. 引用计数归零并超过保留期后，回收旧 proxy 和 GitNexus 进程。
+
+### 20.6 mcp-proxy 选型检查
+
+候选代理至少需要验证：
+
+- 支持 MCP Streamable HTTP，而不只是旧 HTTP+SSE。
+- 正确完成初始化、能力协商和 `Mcp-Session-Id`。
+- 支持多个并发 HTTP Session。
+- 明确 Session 到 stdio 进程的映射模型。
+- 子进程异常退出后能够恢复或返回稳定错误。
+- 客户端断开后能够回收 Session 和子进程。
+- 透明传递 tools、resources、prompts 和通知。
+- 支持请求超时、响应大小限制和健康检查。
+- 支持或兼容 `Origin` 校验、HTTPS 和外部认证代理。
+- 代理日志不污染 GitNexus MCP stdout。
+- 提供 stderr、退出码、请求 trace 和基础指标。
+
+选型时必须对以下两种压力场景进行验证：
+
+1. 多个 HTTP 客户端共享一个 GitNexus stdio 进程时的并发安全。
+2. 每个 Session 独占 GitNexus 进程时的启动延迟和内存占用。
 
 ## 21. 推荐工程结构
 
@@ -808,6 +1009,10 @@ GraphGateway/
 │  ├─ transport/
 │  │  ├─ northbound-server/
 │  │  └─ downstream-client/
+│  ├─ nodes/
+│  │  ├─ endpoint-registry/
+│  │  ├─ capability-registry/
+│  │  └─ lifecycle-manager/
 │  ├─ workspace/
 │  │  ├─ workspace-registry/
 │  │  ├─ source-resolver/
@@ -838,13 +1043,17 @@ GraphGateway/
 ### 阶段一：单源与分支视图
 
 - GraphGateway 北向 MCP Streamable HTTP。
-- GitNexus 本地和远程南向 MCP Streamable HTTP。
+- 选定并验证 mcp-proxy。
+- 通过 mcp-proxy 将 GitNexus stdio MCP 暴露为 Streamable HTTP。
+- 采用一实例一 Source/generation 节点模型。
+- 实现 proxy 和 GitNexus stdio 子进程的生命周期管理。
 - Source 注册与能力协商。
 - Workspace 会话绑定。
 - branch 到 generation 解析。
 - `query`、`context`、`impact` 单源路由。
 - 响应 provenance。
 - 本地 primary 写权限。
+- 本地 generation 蓝绿切换。
 
 ### 阶段二：多源查询
 
@@ -866,6 +1075,7 @@ GraphGateway/
 
 - PR 图谱 Source Resolver。
 - 任意 Commit 图谱 Source Resolver。
+- 评估共享多 generation GitNexus MCP 节点。
 - 更细粒度的远程写入授权。
 - 基于查询统计的智能路由和缓存。
 
@@ -876,11 +1086,15 @@ PR 和 Commit 只扩展 Source Resolver 与 generation 解析，不应改变 Que
 
 1. GraphGateway 是独立模块，不嵌入 GitNexus LocalBackend。
 2. 北向和南向统一使用 MCP，HTTP 传输采用 Streamable HTTP。
-3. Router 北向是 MCP Server，南向是多个相互隔离的 MCP Client。
-4. 本地和远程节点遵循同一工具契约。
-5. Workspace 决定可用图谱，QueryPlan 决定单次调用实际访问的图谱。
-6. 跨仓联合查询使用分发与聚合，不物理合并图数据库。
-7. 分支必须解析为不可变 generation 后执行。
-8. 普通查询不自动混入 baseline。
-9. 写操作仅允许本地 primary。
-10. 所有结果必须提供成员级 provenance 和版本向量。
+3. GitNexus 保留 stdio MCP，由可替换的 mcp-proxy 暴露 Streamable HTTP。
+4. GraphGateway 不依赖具体 mcp-proxy 产品或私有 API。
+5. Router 北向是 MCP Server，南向是多个相互隔离的 MCP Client。
+6. 本地和远程节点遵循同一工具契约。
+7. 第一阶段采用 endpoint 与 Source/generation 一对一绑定。
+8. 本地高频更新使用 generation 蓝绿切换，不查询构建中的图谱。
+9. Workspace 决定可用图谱，QueryPlan 决定单次调用实际访问的图谱。
+10. 跨仓联合查询使用分发与聚合，不物理合并图数据库。
+11. 分支必须解析为不可变 generation 后执行。
+12. 普通查询不自动混入 baseline。
+13. 写操作仅允许本地 primary。
+14. 所有结果必须提供成员级 provenance 和版本向量。
