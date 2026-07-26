@@ -1338,6 +1338,8 @@ version = "0.1.0"
 dependencies = [
  "graphgateway-types",
  "rand 0.8.7",
+ "serde",
+ "serde_json",
  "subtle",
  "thiserror 2.0.19",
 ]

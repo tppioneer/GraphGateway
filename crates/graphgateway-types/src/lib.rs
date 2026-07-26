@@ -5,6 +5,32 @@
 
 use serde::{Deserialize, Serialize};
 
+// ---------------------------------------------------------------------------
+// Public modules (domain contracts — P1-03)
+// ---------------------------------------------------------------------------
+
+pub mod capability;
+pub mod generation;
+pub mod ids;
+pub mod provenance;
+pub mod source;
+pub mod view;
+pub mod workspace;
+
+// Re-export every public symbol so callers can `use graphgateway_types::*`
+// or refer to a single module.
+pub use capability::*;
+pub use generation::*;
+pub use ids::*;
+pub use provenance::*;
+pub use source::*;
+pub use view::*;
+pub use workspace::*;
+
+// ---------------------------------------------------------------------------
+// Protocol / API constants
+// ---------------------------------------------------------------------------
+
 /// The current sidecar startup protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -165,6 +191,10 @@ pub struct SidecarSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop_version: Option<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Tests (pre-existing)
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

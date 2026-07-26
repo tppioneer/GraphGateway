@@ -1,8 +1,19 @@
 //! GraphGateway core domain — token generation, constant-time comparison,
-//! and utilities shared by server and client without pulling in HTTP deps.
+//! domain validation, and error types shared by server and client without
+//! pulling in HTTP deps.
 
 use rand::Rng;
 use subtle::ConstantTimeEq;
+
+pub mod error;
+pub mod validation;
+
+pub use error::*;
+pub use validation::*;
+
+// ---------------------------------------------------------------------------
+// Token generation
+// ---------------------------------------------------------------------------
 
 /// Generate a cryptographically-random access token.
 ///
