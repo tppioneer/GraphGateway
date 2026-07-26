@@ -359,7 +359,22 @@ class ProcessManager {
   async stop(log) {
     if (this.proxy && !this.proxy.killed && this._started) {
       this.cleanupDone = true;
-      log(`Stopping mcp-proxy (PID ${this.proxyPid})...`);
+      log(`Stopping mcp-proxy (spawn PID ${this.proxyPid})...`);
+
+      // On Windows with shell:true, child.kill() targets the cmd.exe wrapper,
+      // which may leave mcp-proxy.exe and its children orphaned.
+      // Use netstat to find the actual listening PID and kill the process tree.
+      if (platform === 'win32' && this.port > 0) {
+        const realPid = getPidByPort(this.port);
+        if (realPid > 0 && realPid !== this.proxyPid) {
+          log(`  Killing actual proxy PID ${realPid} (tree)...`);
+          try {
+            sh(['cmd', '/c', `taskkill /PID ${realPid} /T /F 2>nul`]);
+          } catch {}
+          await sleep(500);
+        }
+      }
+
       this.proxy.kill('SIGTERM');
       const ok = await new Promise(r => { const t = setTimeout(() => r(false), 8000); this.proxy.on('exit', () => { clearTimeout(t); r(true); }); });
       if (!ok) { log('  SIGKILL...'); try { this.proxy.kill('SIGKILL'); } catch {} }
