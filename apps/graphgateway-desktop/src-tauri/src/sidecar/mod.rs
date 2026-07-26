@@ -804,13 +804,23 @@ fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + 
     Err(msg.into())
 }
 
-fn build_target_triple() -> &'static str {
+/// Return the effective target triple for sidecar binary resolution.
+///
+/// Priority order:
+///   1. `CARGO_BUILD_TARGET` env var (set explicitly at build/run time)
+///   2. `cfg!` compile-time target (reflects the Rust toolchain target)
+fn build_target_triple() -> String {
+    if let Ok(t) = std::env::var("CARGO_BUILD_TARGET") {
+        if !t.is_empty() {
+            return t;
+        }
+    }
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "x86_64-pc-windows-msvc"
+        "x86_64-pc-windows-msvc".into()
     } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
-        "aarch64-pc-windows-msvc"
+        "aarch64-pc-windows-msvc".into()
     } else {
-        "x86_64-pc-windows-msvc"
+        "x86_64-pc-windows-msvc".into()
     }
 }
 
@@ -820,5 +830,56 @@ fn get_data_dir() -> String {
     } else {
         let tmp = std::env::temp_dir();
         tmp.join("graphgateway-data").to_string_lossy().to_string()
+    }
+}
+
+#[cfg(test)]
+mod target_triple_tests {
+    use super::build_target_triple;
+
+    #[test]
+    fn returns_cfg_target_by_default() {
+        let triple = build_target_triple();
+        // On Windows this will end with -pc-windows-msvc.
+        assert!(triple.ends_with("-pc-windows-msvc"));
+        assert!(!triple.is_empty());
+    }
+
+    #[test]
+    fn honors_cargo_build_target_env() {
+        let custom = "aarch64-pc-windows-msvc";
+        std::env::set_var("CARGO_BUILD_TARGET", custom);
+        let triple = build_target_triple();
+        assert_eq!(triple, custom);
+        std::env::remove_var("CARGO_BUILD_TARGET");
+    }
+
+    #[test]
+    fn empty_cargo_build_target_falls_back() {
+        std::env::set_var("CARGO_BUILD_TARGET", "");
+        let triple = build_target_triple();
+        // Should fall back to cfg!
+        assert!(triple.ends_with("-pc-windows-msvc"));
+        std::env::remove_var("CARGO_BUILD_TARGET");
+    }
+
+    #[test]
+    fn multiple_targets_consistent_format() {
+        // Verify that known Windows targets follow the expected naming.
+        let triples = [
+            "x86_64-pc-windows-msvc",
+            "aarch64-pc-windows-msvc",
+            "i686-pc-windows-msvc",
+            "x86_64-pc-windows-gnu",
+        ];
+        for t in &triples {
+            assert!(
+                t.contains("windows"),
+                "triple should contain 'windows': {t}"
+            );
+            let sidecar = format!("graphgateway-{t}.exe");
+            assert!(sidecar.ends_with(".exe"));
+            assert!(sidecar.starts_with("graphgateway-"));
+        }
     }
 }

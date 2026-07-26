@@ -24,6 +24,9 @@ tokio.workspace = true
 tracing.workspace = true
 rand.workspace = true
 
+[dev-dependencies]
+reqwest = { workspace = true, features = ["blocking"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
     "Win32_System_JobObjects",

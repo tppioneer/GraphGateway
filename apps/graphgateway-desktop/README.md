@@ -118,9 +118,37 @@ the expected target triple.
 
 ### "Job Object assignment failed"
 
-This can happen when the Tauri process is already in a Windows Job Object
-(e.g., some CI runners or process managers).  The sidecar will still start
-but without Kill-On-Job-Close protection.
+The Tauri backend requires a Windows Job Object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for sidecar process-tree cleanup.
+Job Object creation and assignment are **hard startup requirements**:
+
+- If `CreateJobObjectW` or `AssignProcessToJobObject` fails, the sidecar
+  child process is immediately killed and reaped.
+- All acquired resources (child handle, Job Object handle, token, endpoint)
+  are rolled back.
+- The desktop startup or `sidecar_start` command returns an error.
+- The sidecar state transitions to `Failed` with a diagnostic message in
+  `last_error`.
+
+This failure typically occurs when the Tauri process itself is already
+assigned to a Windows Job Object (e.g., some CI runners, process managers,
+or debuggers).  The parent Job Object prevents assignment to a second one.
+
+**Diagnostic procedure:**
+
+1. Check whether the Tauri process is already in a Job Object:
+   ```powershell
+   Get-Process -Id $pid | Select-Object -Property Name, Id
+   # In Process Explorer: double-click the process → Job tab
+   ```
+2. If running under a CI runner or process manager that creates Job Objects,
+   configure the runner to not assign the Tauri process to a Job, or use a
+   dedicated test machine without Job Object nesting.
+3. Verify the Windows version supports `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+   (Windows 8 / Server 2012 or later).
+4. Run the Tauri app outside the job-nesting environment (e.g., directly from
+   Explorer or an unmanaged command prompt) to confirm the Job Object is
+   created successfully in a normal desktop session.
 
 ### Sidecar fails to start after upgrade
 
