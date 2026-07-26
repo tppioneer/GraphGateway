@@ -59,14 +59,6 @@ pnpm-debug.log*
 Thumbs.db
 Desktop.ini
 
-# -----------------------------------------------------------------------------
-# Interop test fixture repo metadata (generated at test time)
-# -----------------------------------------------------------------------------
-/tests/fixtures/mcp/sample-repo/.git/
-/tests/fixtures/mcp/sample-repo/.gitnexus/
-/tests/fixtures/mcp/sample-repo/.claude/
-/tests/fixtures/mcp/sample-repo/AGENTS.md
-/tests/fixtures/mcp/sample-repo/CLAUDE.md
 
 # -----------------------------------------------------------------------------
 # Temporary and editor backup files
