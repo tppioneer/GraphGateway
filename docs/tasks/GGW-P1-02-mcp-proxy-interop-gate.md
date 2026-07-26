@@ -2,8 +2,9 @@
 
 ## 元数据
 
-- State: `IMPLEMENTING`
-- Implementation HEAD: `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- State: `READY_FOR_REVIEW`
+- Implementation HEAD: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Tested code commit: `8c29d71aa496bdd92b551d176eb56c95507e64a5`
 - Remediation round: `2/2`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-02`
 - Open findings: `P102-R1`、`P102-R2`、`P102-R3`
