@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/graphgateway-types",
+    "crates/graphgateway-core",
+    "crates/graphgateway-rest",
+    "crates/graphgateway-server",
+    "crates/graphgateway-client",
+    "apps/graphgateway-desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+repository = "https://github.com/bathfire/GraphGateway"
+authors = ["GraphGateway Contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
+clap = { version = "4", features = ["derive", "env"] }
+subtle = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+
+graphgateway-types = { path = "crates/graphgateway-types" }
+graphgateway-core = { path = "crates/graphgateway-core" }
+graphgateway-rest = { path = "crates/graphgateway-rest" }
+graphgateway-client = { path = "crates/graphgateway-client" }
+graphgateway-server = { path = "crates/graphgateway-server" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1

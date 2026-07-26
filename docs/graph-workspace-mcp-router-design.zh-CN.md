@@ -802,17 +802,22 @@ northbound request
 
 ## 19. 部署形态
 
+GraphGateway 的 Windows 独立 EXE、Tauri 管理产品、REST/CLI 集成、Owned Sidecar
+生命周期和发布方式，参见
+[GraphGateway Windows 与 Tauri Product 设计](./graphgateway-windows-tauri-product-design.zh-CN.md)。
+
 ### 19.1 本地开发
 
 ```text
-IDE
-  → Local GraphGateway Router
+GraphGateway Desktop / IDE
+  → Local GraphGateway Router (Owned Sidecar)
       → Local mcp-proxy → GitNexus stdio MCP
       → Remote mcp-proxy → Baseline GitNexus stdio MCP
 ```
 
 Router 和本地 mcp-proxy 都监听 loopback，远程节点通过 HTTPS 访问。GitNexus stdio
-MCP 不单独监听网络端口。
+MCP 不单独监听网络端口。当前产品 MVP 由 Tauri Product 负责启动、监控和停止本地
+GraphGateway Sidecar；Shared Service 与 Remote 产品连接模式暂缓。
 
 ### 19.2 团队内网
 
@@ -1001,6 +1006,10 @@ gen-18 ready
 2. 每个 Session 独占 GitNexus 进程时的启动延迟和内存占用。
 
 ## 21. 推荐工程结构
+
+以下结构描述 Router 内部职责分层，不代表完整的 Windows/Tauri 产品仓库结构。完整
+产品结构和 Rust Cargo Workspace 划分参见
+[GraphGateway Windows 与 Tauri Product 设计](./graphgateway-windows-tauri-product-design.zh-CN.md)。
 
 ```text
 GraphGateway/

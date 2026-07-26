@@ -1,0 +1,15 @@
+[package]
+name = "graphgateway-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "GraphGateway domain logic — no Axum, Reqwest, rmcp, or Tauri deps"
+
+[dependencies]
+graphgateway-types.workspace = true
+rand.workspace = true
+subtle.workspace = true
+thiserror.workspace = true

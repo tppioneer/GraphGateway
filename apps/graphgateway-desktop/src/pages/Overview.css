@@ -1,0 +1,129 @@
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.overview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.overview-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.overview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.overview-actions button {
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.overview-actions button:hover:not(:disabled) {
+  background: #21262d;
+}
+
+.overview-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.overview-msg {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.overview-error {
+  color: var(--red);
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.state-ready {
+  background: #1a3a1a;
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+
+.state-transition {
+  background: #2a2410;
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+}
+
+.state-failed {
+  background: #3a1a1a;
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+
+.state-stopped {
+  background: #1a1a2e;
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
+}
+
+.last-error {
+  color: var(--red);
+  font-size: 13px;
+  max-width: 480px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-size: 15px;
+  font-weight: 500;
+  word-break: break-all;
+}

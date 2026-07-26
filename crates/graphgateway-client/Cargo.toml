@@ -1,0 +1,21 @@
+[package]
+name = "graphgateway-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Strongly-typed REST client for GraphGateway — used by Tauri and CLI"
+
+[dependencies]
+graphgateway-types.workspace = true
+
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
