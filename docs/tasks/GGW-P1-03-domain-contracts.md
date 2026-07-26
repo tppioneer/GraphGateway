@@ -2,8 +2,8 @@
 
 ## 元数据
 
-- State: `IMPLEMENTING`
-- Implementation HEAD: `247c87d5e4325b3909cbd0eab278109a8707aa43`
+- State: `READY_FOR_REVIEW`
+- Implementation HEAD: `d0d9b70f4378a918c78157a7d7c0bc9fb9e05bae`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-03`
 - Open findings: `P103-R1`、`P103-R4`
 - Closed findings: `P103-R2`、`P103-R3`
