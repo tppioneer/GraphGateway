@@ -141,25 +141,8 @@ function probeVersions() {
   return versions;
 }
 
-// ── process tracking (P102-R3) ───────────────────────────────────────────────
-/** Get all running PIDs on the system. Used only for informational logging, not test assertions. */
-function getAllPids() {
-  if (platform !== 'win32') {
-    const r = shCapture(['ps', '-eo', 'pid']);
-    if (r.exitCode !== 0) return [];
-    return r.stdout.split('\n').slice(1).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-  }
-  const out = sh(['cmd', '/c', 'tasklist /fo csv /nh']);
-  if (!out) return [];
-  const pids = [];
-  for (const line of out.split('\n')) {
-    const m = line.match(/"([^"]+)",\s*"(\d+)"/);
-    if (m) pids.push(parseInt(m[2], 10));
-  }
-  return pids;
-}
-
-/** Find child PIDs of a parent process using multiple fallback strategies. */
+// ── process tracking (P102-R3: parent/child only, no system-wide PID delta) ──
+/** Find child PIDs of a parent process using parent/child relationships only. */
 function findChildPids(parentPid) {
   if (platform !== 'win32') {
     const r = shCapture(['pgrep', '-P', String(parentPid)]);
@@ -275,8 +258,70 @@ async function createTempFixture(fixturePath, log) {
 }
 
 /**
+ * P102-R1: Parse `gitnexus list` output into {name, path} pairs.
+ * Repo name lines have exactly 2 leading spaces; Path lines have 4+ leading
+ * spaces followed by the "Path:" keyword.
+ */
+function parseGitNexusList(stdout) {
+  const repos = [];
+  const lines = stdout.split(/\r?\n/);
+  let currentName = null;
+  for (const line of lines) {
+    const nameMatch = line.match(/^  (\S.*)$/);
+    if (nameMatch) {
+      // Repo name line; gitnexus may append a parenthetical path like
+      // "sample-repo  (C:\path\to\repo)" - strip it to get just the name.
+      const raw = nameMatch[1].trim();
+      const parenIdx = raw.indexOf(' (');
+      currentName = parenIdx >= 0 ? raw.slice(0, parenIdx).trim() : raw;
+      continue;
+    }
+    const pathMatch = line.match(/^    Path:\s+(.+)$/);
+    if (pathMatch && currentName) {
+      repos.push({ name: currentName, path: pathMatch[1].trim() });
+    }
+  }
+  return repos;
+}
+
+/**
+ * P102-R1: Normalize a repository path for exact comparison.
+ * Resolves symlinks and Windows 8.3 short names via realpath, normalizes
+ * separators to forward slashes, and lowercases (Windows is case-insensitive).
+ * Falls back to the raw path only if realpath fails (path no longer on disk),
+ * in which case it cannot match a canonicalized existing path.
+ */
+async function normalizeRepoPath(p) {
+  let resolved;
+  try {
+    resolved = await realpath(p);
+  } catch {
+    resolved = p;
+  }
+  return resolved.replace(/\\/g, '/').toLowerCase();
+}
+
+/**
+ * P102-R1: Match repos by exactly one normalized full-path equality.
+ * No basename, substring, or "includes" matching is permitted.
+ */
+async function matchReposByCanonicalPath(repos, canonicalFixturePath, log) {
+  const matches = [];
+  for (const repo of repos) {
+    const canonicalRepoPath = await normalizeRepoPath(repo.path);
+    if (canonicalRepoPath === canonicalFixturePath) {
+      matches.push(repo);
+      log(`    exact path match: repo="${repo.name}" normalized="${canonicalRepoPath}"`);
+    }
+  }
+  return matches;
+}
+
+/**
  * P102-R1: setupFixture — every critical command must fail fast.
- * No silent error swallowing, no basename fallback for repo identity.
+ * Canonical identity is resolved by exactly one normalized full-path match.
+ * Zero matches or multiple matches FAIL before the protocol gate runs.
+ * No basename, no-repo, file-only, or global fallback is permitted.
  */
 async function setupFixture(tempFixture, log) {
   const { fixturePath } = tempFixture;
@@ -323,35 +368,20 @@ async function setupFixture(tempFixture, log) {
   }
   log(`  Verified git commit: ${logR.stdout.trim()}`);
 
-  // Step 6: gitnexus index — must succeed
+  // Step 6: Resolve canonical fixture path (P102-R1: full path only, no basename)
+  const canonicalFixture = await normalizeRepoPath(fixturePath);
+  log(`  Canonical fixture path: ${canonicalFixture}`);
+
+  // Step 7: gitnexus list — must succeed; check if already indexed by exact path
   const listR1 = shCapture([GITNEXUS_BIN, 'list']);
   if (listR1.exitCode !== 0) {
     tempFixture.error = `FATAL: gitnexus list failed (exit ${listR1.exitCode}): ${listR1.stderr || listR1.error}`;
     return;
   }
-
-  // Resolve the real (canonical) path AND keep the original path for matching.
-  // gitnexus may store the path as received (short 8.3 names) or canonical form.
-  const realResolvedPath = (await realpath(fixturePath)).replace(/\\/g, '/');
-  const originalPath = fixturePath.replace(/\\/g, '/');
-  log(`  Fixture path (original): ${originalPath}`);
-  log(`  Fixture path (realpath): ${realResolvedPath}`);
-
-  // Try both the original and resolved paths for matching
-  const pathCandidates = [originalPath.toLowerCase(), realResolvedPath.toLowerCase()];
-  // Also add basename-only variants for the path line match
-  const basenameLower = basename(fixturePath).toLowerCase();
-
-  // Helper: normalize slashes in gitnexus list lines before comparison
-  const lineIncludesPath = (line) => {
-    const normalizedLine = line.replace(/\\/g, '/').toLowerCase();
-    return pathCandidates.some(p => normalizedLine.includes(p));
-  };
-
-  if (listR1.stdout.split('\n').some(lineIncludesPath)) {
-    log('  Already indexed by GitNexus');
-  } else {
-    log('  Indexing fixture with gitnexus analyze...');
+  const repos1 = parseGitNexusList(listR1.stdout);
+  const matches1 = await matchReposByCanonicalPath(repos1, canonicalFixture, log);
+  if (matches1.length === 0) {
+    log('  Not indexed yet — indexing fixture with gitnexus analyze...');
     const analyzeR = shCapture([GITNEXUS_BIN, 'analyze', fixturePath], { timeout: 120_000 });
     if (analyzeR.exitCode !== 0) {
       tempFixture.error = `FATAL: gitnexus analyze failed (exit ${analyzeR.exitCode}): ${analyzeR.stderr || analyzeR.error}`;
@@ -361,62 +391,39 @@ async function setupFixture(tempFixture, log) {
     tempFixture.freshlyIndexed = true;
   }
 
-  // Step 7: Resolve canonical GitNexus identity — NO basename fallback
+  // Step 8: Resolve canonical GitNexus identity — exactly ONE full-path match (P102-R1)
   const listR2 = shCapture([GITNEXUS_BIN, 'list']);
   if (listR2.exitCode !== 0) {
     tempFixture.error = `FATAL: gitnexus list for identity resolution failed (exit ${listR2.exitCode}): ${listR2.stderr || listR2.error}`;
     return;
   }
+  const repos2 = parseGitNexusList(listR2.stdout);
+  log(`  Scanning ${repos2.length} indexed repos for exact full-path match`);
+  const matches2 = await matchReposByCanonicalPath(repos2, canonicalFixture, log);
 
-  const lines = listR2.stdout.split('\n');
-  // Debug: show lines near our fixture
-  log(`  Scanning ${lines.length} lines of gitnexus list for fixture identity`);
-  for (const line of lines) {
-    if (line.toLowerCase().includes(basenameLower) && line.trim()) {
-      log(`    found: "${line.replace(/\\/g, '/')}"`);
-    }
-  }
-
-  let foundIndex = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lineIncludesPath(lines[i])) {
-      foundIndex = i;
-      for (let j = i - 1; j >= 0; j--) {
-        const m = lines[j].match(/^\s{2}(\S+)/);
-        if (m) { tempFixture.repoName = m[1]; break; }
-      }
-      break;
-    }
-  }
-
-  if (!tempFixture.repoName) {
-    // Last resort: try matching just the basename for the path line (not as repo name fallback)
-    for (let i = 0; i < lines.length; i++) {
-      const lineLower = lines[i].replace(/\\/g, '/').toLowerCase();
-      if (lineLower.includes('path:') && lineLower.includes(basenameLower)) {
-        log(`    path-only fallback matched line: "${lines[i].replace(/\\/g, '/')}"`);
-        for (let j = i - 1; j >= 0; j--) {
-          const m = lines[j].match(/^\s{2}(\S+)/);
-          if (m) { tempFixture.repoName = m[1]; break; }
-        }
-        break;
-      }
-    }
-  }
-
-  if (!tempFixture.repoName) {
-    tempFixture.error = `FATAL: cannot resolve fixture canonical GitNexus identity. Tried paths: [${pathCandidates.join(', ')}]. Basename: ${basenameLower}`;
+  if (matches2.length === 0) {
+    tempFixture.error = `FATAL: zero GitNexus repos match fixture canonical path "${canonicalFixture}". Identity could not be resolved — no basename fallback permitted.`;
     return;
   }
-  log(`  Resolved repo name: ${tempFixture.repoName}`);
+  if (matches2.length > 1) {
+    const names = matches2.map(m => `"${m.name}"`).join(', ');
+    tempFixture.error = `FATAL: multiple GitNexus repos match fixture canonical path "${canonicalFixture}": [${names}]. Identity is ambiguous — no basename fallback permitted.`;
+    return;
+  }
+
+  tempFixture.repoName = matches2[0].name;
+  log(`  Resolved repo name (exact full-path match): ${tempFixture.repoName}`);
 }
 
 async function cleanupTempFixture(tempFixture, log) {
+  const tmpLabel = basename(tempFixture.tmpBase);
   try {
     await rm(tempFixture.tmpBase, { recursive: true, force: true });
-    log(`Cleaned up temp fixture: ${tempFixture.tmpBase}`);
+    log(`Cleaned up temp fixture: ${tmpLabel}`);
+    return { status: VERDICT.PASS, evidence: `temp fixture removed: ${tmpLabel}` };
   } catch (e) {
     log(`Warning: could not clean up temp fixture: ${e.message}`);
+    return { status: VERDICT.FAIL, evidence: `temp fixture cleanup failed for ${tmpLabel}` };
   }
 }
 
@@ -872,7 +879,7 @@ test('8.1 delay tool: configurable slow request eventually completes', async (_c
   }
 }, { required: true });
 
-test('8.2 client abort: proxy and session remain functional after abort', async (_client, _fixture, log, args) => {
+test('8.2 client abort: observe upstream final state and session behavior', async (_client, _fixture, log, args) => {
   let ctrl;
   try {
     ctrl = await startControllableProxy(log, [args._actualPort]);
@@ -880,15 +887,16 @@ test('8.2 client abort: proxy and session remain functional after abort', async 
     return FAIL(`controllable proxy start failed: ${e.message}`);
   }
   try {
-    // Verify baseline connectivity
+    // Baseline: record upstream PID before abort
     const idBefore = await ctrl.client.toolCall('identity', {});
     if (idBefore.error) return FAIL(`identity before abort failed: ${idBefore.error.message}`);
     const upstreamPidBefore = parseIdentityPid(extractTextContent(idBefore));
     log(`    upstream PID before abort: ${upstreamPidBefore || 'unknown'}`);
 
-    // Initiate abort on a slow request
+    // Initiate a slow request with an AbortController
+    const DELAY_MS = 5000;
     const controller = new AbortController();
-    const slowReq = ctrl.client.toolCall('delay', { ms: 20000 }, { signal: controller.signal, timeout: 25_000 });
+    const slowReq = ctrl.client.toolCall('delay', { ms: DELAY_MS }, { signal: controller.signal, timeout: 25_000 });
 
     setTimeout(() => {
       log('    aborting client request after 500ms...');
@@ -901,46 +909,63 @@ test('8.2 client abort: proxy and session remain functional after abort', async 
       await slowReq;
     } catch (e) {
       aborted = true;
-      const dur = msSince(t0);
-      const isAbortError = e.name === 'AbortError' || /abort/i.test(e.message || '');
-      log(`    Abort caught after ${dur}ms: ${e.message?.slice(0, 120)} (isAbortError=${isAbortError})`);
+      log(`    Abort caught after ${msSince(t0)}ms: ${e.message?.slice(0, 120)}`);
     }
 
     if (!aborted) return FAIL('abort did not interrupt the slow request');
 
-    // P102-R2: keep proxy running — verify session is still functional
-    await sleep(500);
+    // P102-R2: keep proxy running and wait for the delay duration so we can
+    // observe whether the upstream request completed, was cancelled, or is unknown.
+    const waitMs = DELAY_MS + 1000;
+    log(`    waiting ${waitMs}ms to observe upstream final state...`);
+    await sleep(waitMs);
 
-    // 1. Same session should still work after abort
+    // Observe relevant process behavior: is the upstream process still alive?
+    const upstreamPidAlive = upstreamPidBefore ? pidExists(upstreamPidBefore) : false;
+    log(`    upstream PID ${upstreamPidBefore} alive after abort: ${upstreamPidAlive}`);
+
+    // Observe upstream request final state via the controllable fixture
+    let upstreamRequestState = 'unknown';
+    if (upstreamPidAlive) {
+      try {
+        const ds = await ctrl.client.toolCall('delay_status', {}, { timeout: 5_000 });
+        if (!ds.error) {
+          const stateObj = JSON.parse(extractTextContent(ds));
+          upstreamRequestState = stateObj.state || 'unknown';
+        }
+      } catch (e) {
+        log(`    delay_status query failed: ${e.message?.slice(0, 120)}`);
+      }
+    } else {
+      // Upstream process is no longer alive; the request was cancelled
+      upstreamRequestState = 'cancelled';
+    }
+    log(`    upstream request final state: ${upstreamRequestState}`);
+
+    // Observe original Session behavior
     let sessionAlive = false;
+    let upstreamPidAfter = null;
     try {
       const postAbortId = await ctrl.client.toolCall('identity', {}, { timeout: 5_000 });
       if (!postAbortId.error) {
         sessionAlive = true;
-        const upstreamPidAfter = parseIdentityPid(extractTextContent(postAbortId));
-        log(`    session functional after abort, upstream PID: ${upstreamPidAfter || 'unknown'}`);
-        if (upstreamPidBefore && upstreamPidAfter && upstreamPidBefore !== upstreamPidAfter) {
-          log(`    NOTE: upstream PID changed from ${upstreamPidBefore} to ${upstreamPidAfter} — proxy may have restarted upstream`);
-        }
+        upstreamPidAfter = parseIdentityPid(extractTextContent(postAbortId));
+        log(`    original session functional after abort, upstream PID: ${upstreamPidAfter || 'unknown'}`);
       } else {
-        log(`    session error after abort: ${postAbortId.error.message}`);
+        log(`    original session error after abort: ${postAbortId.error.message}`);
       }
     } catch (e) {
-      log(`    session not reachable after abort: ${e.message?.slice(0, 120)}`);
+      log(`    original session not reachable after abort: ${e.message?.slice(0, 120)}`);
     }
 
-    if (!sessionAlive) {
-      return CONSTRAINT('session not functional after client abort — proxy may not recover session state after abort');
-    }
-
-    // 2. Sibling session should also work
+    // Observe sibling Session behavior
     let siblingAlive = false;
     try {
       const c2 = await ctrl.client.forkAsNewSession();
       const siblingCheck = await c2.toolCall('identity', {}, { timeout: 5_000 });
       if (!siblingCheck.error) {
         siblingAlive = true;
-        log(`    sibling session functional after abort, upstream PID: ${parseIdentityPid(extractTextContent(siblingCheck)) || 'unknown'}`);
+        log('    sibling session functional after abort');
       } else {
         log(`    sibling session error: ${siblingCheck.error.message}`);
       }
@@ -948,18 +973,28 @@ test('8.2 client abort: proxy and session remain functional after abort', async 
       log(`    sibling session creation failed after abort: ${e.message?.slice(0, 120)}`);
     }
 
-    // 3. Verify upstream process is still alive
-    const finalId = await ctrl.client.toolCall('identity', {}, { timeout: 5_000 });
-    if (finalId.error) {
-      return CONSTRAINT(`upstream not reachable after abort: ${finalId.error.message}`);
+    const pidChanged = upstreamPidBefore && upstreamPidAfter && upstreamPidBefore !== upstreamPidAfter;
+    const evidenceParts = [
+      'abort interrupted local request',
+      `upstream PID ${upstreamPidBefore}=${upstreamPidAlive ? 'alive' : 'dead'}${pidChanged ? ` (changed to ${upstreamPidAfter})` : ''}`,
+      `upstream request state=${upstreamRequestState}`,
+      `original session alive=${sessionAlive}`,
+      `sibling session alive=${siblingAlive}`,
+    ];
+
+    // P102-R2 verdict: upstream continuation is a measured constraint, not a
+    // failure. siblingAlive=false must never produce PASS.
+    if (!sessionAlive || !siblingAlive) {
+      return CONSTRAINT(`session(s) not fully functional after client abort. ${evidenceParts.join('; ')}`);
     }
-
-    const evidenceParts = ['abort correctly interrupted slow request'];
-    evidenceParts.push(`session functional=${sessionAlive}`);
-    evidenceParts.push(`sibling session functional=${siblingAlive}`);
-    evidenceParts.push(`upstream alive after abort=true`);
-
-    return PASS(`abort evidence: ${evidenceParts.join('; ')}`);
+    if (upstreamRequestState === 'completed') {
+      return CONSTRAINT(`upstream continued and completed the aborted request (abort not propagated to upstream). ${evidenceParts.join('; ')}`);
+    }
+    if (upstreamRequestState === 'cancelled') {
+      return PASS(`upstream request cancelled after client abort, sessions remain functional. ${evidenceParts.join('; ')}`);
+    }
+    // genuinely unknown
+    return CONSTRAINT(`upstream request final state unknown. ${evidenceParts.join('; ')}`);
   } finally {
     await ctrl.pm.stop(log);
     await sleep(1000);
@@ -1281,13 +1316,17 @@ test('11.2 deterministic descendant tracking — no system-wide baseline', async
   }
 
   // Ownership proof step 2: proxy is functional via its child processes
+  // P102-R3: any MCP functional ownership check failure must FAIL.
   try {
     const c = new McpClient(port2, log);
     await c.initialize();
-    await c.toolsList();
+    const tl = await c.toolsList();
+    if (tl.error) throw new Error(`tools/list error: ${tl.error.message}`);
     log(`    proxy on port ${port2} functional — descendant processes serve MCP traffic`);
   } catch (e) {
-    log(`    proxy functional check: ${e.message}`);
+    await pm2.stop(log);
+    await sleep(1000);
+    return FAIL(`MCP functional ownership check failed — cannot prove descendants serve MCP traffic: ${e.message}`);
   }
 
   // Store for cleanup verification in 11.3
@@ -1470,7 +1509,7 @@ test('13.1 main proxy stop terminates all child processes', async (_client, _fix
       // Stop anyway but record inability to verify
       await mainPm.stop(log);
       await sleep(2000);
-      return CONSTRAINT(`no descendant PIDs found for main proxy (port PID ${mainProxyPid}, spawn PID ${mainPm.proxyPid}) — cannot verify cleanup ownership`);
+      return FAIL(`no descendant PIDs found for main proxy (port PID ${mainProxyPid}, spawn PID ${mainPm.proxyPid}) — cannot establish process ownership via parent/child. No system-wide fallback permitted.`);
     }
     descendantPids = directChildren;
     log(`  Using direct children: [${descendantPids.join(', ')}]`);
@@ -1765,20 +1804,58 @@ async function main() {
   log('\n--- Tests ---');
   const results = await runAllTests(client, tempFixture, log, args);
 
-  // 6. Stop any remaining secondary proxy (from test 11.2 if test 11.3 didn't already)
-  if (args._trackedPm2) {
-    try { await args._trackedPm2.stop(log); } catch {}
-    await sleep(1000);
+  // 6. P102-R3: every cleanup result (fallback/final/temp-fixture) must enter
+  //    the verdict before report generation.
+  log('\n--- Cleanup verification ---');
+
+  // 6a. Fallback: stop main proxy if test 13.1 did not (e.g., it failed or was skipped)
+  if (args._mainPm) {
+    const t0 = hrtime();
+    let status, evidence;
+    try {
+      await args._mainPm.stop(log);
+      await sleep(2000);
+      status = VERDICT.PASS;
+      evidence = 'fallback main proxy cleanup: proxy stopped (test 13.1 did not complete cleanup)';
+    } catch (e) {
+      status = VERDICT.FAIL;
+      evidence = `fallback main proxy cleanup failed: ${e.message}`;
+    }
+    results.push({ suite: '13. Main proxy cleanup', name: '13.2 fallback main proxy cleanup', status, evidence, duration_ms: msSince(t0) });
+    log(`  [${status}] 13.2 fallback main proxy cleanup`);
+    args._mainPm = null;
   }
 
-  // 7. Report (P102-R3: generated AFTER cleanup verification results are in)
+  // 6b. Fallback: stop secondary proxy if test 11.3 did not
+  if (args._trackedPm2) {
+    const t0 = hrtime();
+    let status, evidence;
+    try {
+      await args._trackedPm2.stop(log);
+      await sleep(1000);
+      status = VERDICT.PASS;
+      evidence = 'fallback secondary proxy cleanup: proxy stopped (test 11.3 did not complete cleanup)';
+    } catch (e) {
+      status = VERDICT.FAIL;
+      evidence = `fallback secondary proxy cleanup failed: ${e.message}`;
+    }
+    results.push({ suite: '13. Main proxy cleanup', name: '13.3 fallback secondary proxy cleanup', status, evidence, duration_ms: msSince(t0) });
+    log(`  [${status}] 13.3 fallback secondary proxy cleanup`);
+    args._trackedPm2 = null;
+  }
+
+  // 6c. Temporary fixture cleanup — must enter verdict before report (P102-R3)
+  {
+    const t0 = hrtime();
+    const cr = await cleanupTempFixture(tempFixture, log);
+    results.push({ suite: '13. Main proxy cleanup', name: '13.4 temporary fixture cleanup', status: cr.status, evidence: cr.evidence, duration_ms: msSince(t0) });
+    log(`  [${cr.status}] 13.4 temporary fixture cleanup`);
+  }
+
+  // 7. Report (P102-R3: generated AFTER all cleanup results are in the verdict)
   log('\n--- Report ---');
   await mkdir(dirname(REPORT_PATH), { recursive: true });
   const report = await generateReport(results, versions, tempFixture, args, startTime, log);
-
-  // 8. Cleanup temp fixture
-  log('\n--- Cleanup ---');
-  await cleanupTempFixture(tempFixture, log);
 
   // 9. Summary
   log(`\n=== ${report.overall} ===`);

@@ -13,6 +13,7 @@
  *   crash      — exits the process with code 1 (upstream crash testing)
  *   disconnect — closes stdin/stdout without exiting (connection-loss testing)
  *   identity   — returns server PID, uptime, and platform (sanity check)
+ *   delay_status — returns state of the most recent delay request (P102-R2)
  *
  * Logs to stderr so the MCP transport (stdout) stays clean.
  */
@@ -54,6 +55,11 @@ const TOOLS = [
     description: 'Returns the server PID, uptime, and platform. Always succeeds.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'delay_status',
+    description: 'Returns the state of the most recent delay request (none, pending, completed). Used by the interop runner to observe whether an aborted client request completed upstream.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
 
 function respond(id, result) {
@@ -67,6 +73,11 @@ function rpcError(id, code, message) {
 }
 
 let initialized = false;
+
+// P102-R2: track the most recent delay request state so the runner can
+// observe whether an aborted client request completed upstream.
+let lastDelayState = 'none';   // 'none' | 'pending' | 'completed'
+let lastDelayMs = 0;
 
 const rl = createInterface({ input: process.stdin, terminal: false });
 
@@ -115,8 +126,11 @@ rl.on('line', (raw) => {
 
         case 'delay': {
           const ms = Math.min(Math.max(0, args.ms || 0), 120_000);
+          lastDelayState = 'pending';
+          lastDelayMs = ms;
           log(`delay ${ms}ms starting`);
           setTimeout(() => {
+            lastDelayState = 'completed';
             log(`delay ${ms}ms complete`);
             respond(id, {
               content: [{ type: 'text', text: `delayed response after ${ms}ms` }],
@@ -163,6 +177,12 @@ rl.on('line', (raw) => {
                 nodeVersion: process.version,
               }),
             }],
+          });
+          break;
+
+        case 'delay_status':
+          respond(id, {
+            content: [{ type: 'text', text: JSON.stringify({ state: lastDelayState, ms: lastDelayMs, pid: process.pid }) }],
           });
           break;
 
