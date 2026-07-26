@@ -128,23 +128,21 @@
 
 ## GGW-P1-03
 
-- Head: `247c87d5e4325b3909cbd0eab278109a8707aa43`
+- Head: `d0d9b70f4378a918c78157a7d7c0bc9fb9e05bae`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-03`
-- Verdict: `CHANGES_REQUIRED`
+- Verdict: `PASS`
 
 ### P103-R1 — High / High confidence
 
-- Status: OPEN after remediation round 1
-- Location: `crates/graphgateway-types/src/view.rs:58-85`,
-  `crates/graphgateway-core/src/validation.rs:313-336`
-- Evidence: 字段私有化、只读 accessor 和 compile-fail 证据已经完成，但
-  `ViewMember::new` 接受任意 `CapabilitySnapshot`，没有校验
-  `capability.source_id == source_id`；`validate_view_member` 对反序列化对象也没有
-  检查该关系，因此仍可把其他 Source 的能力快照绑定到当前成员。
-- Violated item: immutable
-  `Source + generation -> endpoint/capability` 绑定必须在构造和边界校验中成立。
-- Expected: 构造器拒绝 capability Source 身份不匹配，核心校验同时覆盖
-  反序列化输入，并添加构造器与反序列化负向测试；保留现有不可变 API。
+- Status: RESOLVED at
+  `d0d9b70f4378a918c78157a7d7c0bc9fb9e05bae`
+- Location: `crates/graphgateway-types/src/view.rs:63-150`,
+  `crates/graphgateway-core/src/validation.rs:313-345`
+- Closure evidence: `ViewMember` 与 `ResolvedGraphView` 字段保持私有，只暴露只读
+  accessor；5 个 compile-fail 用例证明 generation、endpoint、capability 和成员
+  集合不能原地修改。共享受校验构造路径拒绝
+  `capability.source_id != source_id`，核心校验同时拒绝反序列化产生的错配对象，
+  两条负向测试独立覆盖两个入口。
 
 ### P103-R2 — High / High confidence
 
@@ -168,22 +166,21 @@
 
 ### P103-R4 — Medium / High confidence
 
-- Status: OPEN
-- Location: `crates/graphgateway-types/src/view.rs:58-85,429-454`
-- Evidence: `ViewMember::new` 无条件设置 `unavailable=false`，没有正常类型 API
-  构造不可用成员；`is_degraded_true` 测试明确通过 JSON 反序列化绕过受校验构造器。
-- Violated item: 设计允许部分成员不可用，但响应必须标记降级和缺失成员；领域类型
-  必须能在不破坏不可变性的前提下表达该状态。
-- Expected: 增加显式、不可变且受校验的不可用成员构造路径，保持现有
-  `unavailable` JSON 布尔格式，并用公共类型 API 测试 degraded view。
+- Status: RESOLVED at
+  `d0d9b70f4378a918c78157a7d7c0bc9fb9e05bae`
+- Location: `crates/graphgateway-types/src/view.rs:93-150,470-549`
+- Closure evidence: 新增 `ViewMember::new_unavailable`，与正常构造器复用相同的
+  私有校验路径，且不暴露状态修改接口；`unavailable` 继续使用原 JSON 布尔字段。
+  单元测试通过公共类型 API 构造 unavailable member 和 degraded view，不再通过
+  反序列化绕过构造器。
 
 ### Verification evidence
 
 - `cargo fmt --all -- --check`: PASS
 - `cargo clippy -p graphgateway-types -p graphgateway-core --all-targets --all-features -- -D warnings`: PASS
 - `cargo test -p graphgateway-types -p graphgateway-core --all-features`: PASS，
-  50 core + 73 types + 1 组 trybuild（5 cases）
-- P103-R2、P103-R3 已关闭；P103-R1、P103-R4 进入第二轮整改
+  51 core + 75 types + 1 组 trybuild（5 cases）
+- 独立复审未发现新增 finding；P103-R1、P103-R2、P103-R3、P103-R4 全部关闭
 
 ## Wave A summary
 
@@ -191,7 +188,8 @@
 | --- | --- | --- |
 | GGW-P1-01 | `CHANGES_REQUIRED` | P101-R1、P101-R2、P101-R3 |
 | GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4、P102-R5 |
-| GGW-P1-03 | `CHANGES_REQUIRED` | P103-R1、P103-R4 |
+| GGW-P1-03 | `PASS` | 无 |
 
-三项均未达到 `VERIFIED`，不得集成到 `mcp`。后续整改必须基于各自当前完整
-Implementation HEAD，保留以上 finding ID，并限制为原任务范围内的一轮修复。
+GGW-P1-03 已达到 `VERIFIED`，但尚未集成到 `mcp`；GGW-P1-01 与 GGW-P1-02
+仍为 `CHANGES_REQUIRED`，不得集成。后续整改必须基于各自当前完整
+Implementation HEAD，保留未关闭的 finding ID，并限制为原任务范围内的一轮修复。
