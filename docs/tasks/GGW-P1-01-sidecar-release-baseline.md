@@ -2,8 +2,8 @@
 
 ## 元数据
 
-- State: `IMPLEMENTING`
-- Implementation HEAD: `8115f12247ea03f509d505e878369126776123e1`
+- State: `READY_FOR_REVIEW`
+- Implementation HEAD: `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
 - Open findings: `P101-R1`、`P101-R3`
 - Closed findings: `P101-R2`
