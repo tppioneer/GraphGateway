@@ -167,6 +167,26 @@ END_AGENT_RESULT
 
 Use the same portable prompt for interactive and non-interactive invocations. Do not hardcode Claude Code or OpenCode CLI flags in this skill because installed versions and approval modes can differ. If Codex is asked to launch a CLI itself, first inspect the installed command's local `--help`, then select flags that preserve the execution envelope and return channel.
 
+When the installed Claude Code help lists `--permission-mode auto`, prefer auto mode for bounded implementation in an isolated worktree:
+
+1. Run `claude auto-mode config` first and confirm that an effective classifier configuration is available.
+2. Invoke Claude non-interactively with `-p`, `--permission-mode auto`, `--output-format json`, and an explicit tool set.
+3. Keep destructive bypass flags disabled. Auto mode is a permission classifier, not a sandbox and not proof of completion.
+4. Parse the JSON envelope and require `is_error: false`, `terminal_reason: completed`, no unexpected `permission_denials`, and a valid `AGENT_RESULT`.
+
+Do not add `--max-budget-usd` unless the user explicitly requests a budget limit.
+
+Use this command shape after checking the local help:
+
+```text
+claude -p <cold-start-prompt> \
+  --permission-mode auto \
+  --tools <task-specific-tools> \
+  --no-session-persistence \
+  --no-chrome \
+  --output-format json
+```
+
 Prefer terminal output pasted back to Codex as the manual return channel. If automation requires a result file, place it in a controller-designated run-artifact path that is excluded from the implementation diff; do not let each executor invent a location.
 
 On receipt, Codex must independently:

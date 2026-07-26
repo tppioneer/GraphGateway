@@ -90,6 +90,34 @@
 - Expected: 记录被测 proxy 和各 Session 对应的实际子进程 PID/启动标记，先证明
   存在再证明退出；启动失败必须 FAIL。捕获 stdout/stderr 并对通道隔离做断言。
 
+### P102-R4 — Medium / High confidence
+
+- Location: `.gitignore:63-69`,
+  `docs/tasks/GGW-P1-02-mcp-proxy-interop-gate.md:39-45`
+- Evidence: Implementation HEAD 在仓库根 `.gitignore` 增加了 fixture Git、
+  GitNexus 与代理元数据规则；任务卡允许范围只包含 `scripts/interop/`、
+  `tests/fixtures/mcp/`、`docs/compatibility/` 及任务所需的开发依赖锁文件，
+  未授权修改根目录 `.gitignore`。
+- Violated item: 交付必须遵守任务卡的 Allowed scope；仓库级忽略规则属于范围外
+  变更，且会影响其他任务和开发者看到的工作树状态。
+- Expected: 从整改提交移除根目录 `.gitignore` 变更；若 fixture 会产生运行时
+  文件，应由互操作脚本在受控临时目录内创建并清理，或先通过任务卡变更显式扩大
+  允许范围后再修改仓库级规则。
+
+### P102-R5 — Medium / High confidence
+
+- Location: `docs/compatibility/mcp-proxy-gitnexus-interop-report.md:6,35`
+- Evidence: 报告的 `Commit` 写成任务基线
+  `87afdaeb7c5579facb93edf15f786011ebb3c4ca`，而被审实现 HEAD 为
+  `cbfdee98b47d8ec6cf9601a77231d4e5a9eb9d39`，无法追溯报告实际测试的实现；
+  “测试仓库”还包含
+  `F:\develop\worktrees\GraphGateway-p1-02\tests\fixtures\mcp\sample-repo`
+  这一审查者本机绝对路径。
+- Violated item: 兼容性结论必须来自可复现、已脱敏且可追溯到被测版本的证据。
+- Expected: 在已提交的实现版本上重新运行门禁，报告明确记录实际被测 commit；
+  路径使用仓库相对路径（如 `tests/fixtures/mcp/sample-repo`）或稳定占位符，
+  不得写入开发者机器的绝对路径。
+
 ### Verification evidence
 
 - `node --check scripts/interop/verify-mcp-proxy-gitnexus.mjs`: PASS
@@ -152,7 +180,7 @@
 | Task | Verdict | Open findings |
 | --- | --- | --- |
 | GGW-P1-01 | `CHANGES_REQUIRED` | P101-R1、P101-R2、P101-R3 |
-| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3 |
+| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4、P102-R5 |
 | GGW-P1-03 | `CHANGES_REQUIRED` | P103-R1、P103-R2、P103-R3 |
 
 三项均未达到 `VERIFIED`，不得集成到 `mcp`。后续整改必须基于各自当前完整
