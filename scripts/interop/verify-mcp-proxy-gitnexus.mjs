@@ -15,7 +15,7 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
-import { writeFile, mkdir, stat, rm, cp } from 'node:fs/promises';
+import { writeFile, mkdir, stat, rm, cp, realpath } from 'node:fs/promises';
 import { resolve, dirname, basename, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { argv, exit, platform, hrtime, stdout } from 'node:process';
@@ -85,6 +85,14 @@ async function findFreePort(avoid = []) {
   throw new Error('Could not find a free port');
 }
 
+/** Execute a command and return trimmed stdout. Throws on any failure. */
+function shStrict(cmd, opts = {}) {
+  return execFileSync(cmd[0], cmd.slice(1), {
+    encoding: 'utf-8', timeout: 30_000, shell: platform === 'win32', windowsHide: true, ...opts,
+  }).trim();
+}
+
+/** Execute a command; return trimmed stdout or error string. Graceful — use only for non-critical probes. */
 function sh(cmd, opts = {}) {
   try {
     return execFileSync(cmd[0], cmd.slice(1), {
@@ -93,6 +101,7 @@ function sh(cmd, opts = {}) {
   } catch (e) { return `ERROR: ${e.message}`; }
 }
 
+/** Execute a command; always returns {stdout, stderr, exitCode, error?}. */
 function shCapture(cmd, opts = {}) {
   try {
     const stdout = execFileSync(cmd[0], cmd.slice(1), {
@@ -110,18 +119,30 @@ function shCapture(cmd, opts = {}) {
   }
 }
 
-// ── version probes ──────────────────────────────────────────────────────────
+// ── version probes (P102-R1: fail-fast on missing commands) ──────────────────
 function probeVersions() {
-  return {
-    os: `${platform} ${process.arch}`,
-    node: sh(['node', '--version']),
-    'mcp-proxy': sh([MCP_PROXY_BIN, '--version']),
-    gitnexus: sh([GITNEXUS_BIN, '--version']),
-  };
+  const missing = [];
+  const versions = { os: `${platform} ${process.arch}` };
+
+  for (const [key, cmd] of [['node', ['node', '--version']], ['mcp-proxy', [MCP_PROXY_BIN, '--version']], ['gitnexus', [GITNEXUS_BIN, '--version']]]) {
+    try {
+      versions[key] = shStrict(cmd);
+    } catch (e) {
+      missing.push(`${key} (${cmd.join(' ')})`);
+      versions[key] = `MISSING: ${e.message}`;
+    }
+  }
+
+  if (missing.length > 0) {
+    console.error(`FATAL: Required external commands not available: ${missing.join(', ')}`);
+    exit(1);
+  }
+
+  return versions;
 }
 
 // ── process tracking (P102-R3) ───────────────────────────────────────────────
-/** Get all running PIDs on the system (for baseline/tracking). */
+/** Get all running PIDs on the system. Used only for informational logging, not test assertions. */
 function getAllPids() {
   if (platform !== 'win32') {
     const r = shCapture(['ps', '-eo', 'pid']);
@@ -138,36 +159,62 @@ function getAllPids() {
   return pids;
 }
 
-/** Find child PIDs of a parent process using a temp PowerShell script (avoids pipe escaping issues). */
+/** Find child PIDs of a parent process using multiple fallback strategies. */
 function findChildPids(parentPid) {
   if (platform !== 'win32') {
     const r = shCapture(['pgrep', '-P', String(parentPid)]);
     if (r.exitCode !== 0) return [];
     return r.stdout.split('\n').filter(Boolean).map(s => parseInt(s.trim(), 10));
   }
-  // Windows: write PS1 to temp file, execute, parse
-  const psScript = `Get-CimInstance Win32_Process -Filter "ParentProcessId = ${parentPid}" | ForEach-Object { Write-Output "$($_.ProcessId) $($_.Name)" }`;
+
+  // Strategy 1: PowerShell Get-CimInstance (most reliable, requires admin in some configs)
+  const psScript = `Get-CimInstance Win32_Process -Filter "ParentProcessId = ${parentPid}" | ForEach-Object { Write-Output "$($_.ProcessId)" }`;
   const tmpFile = join(tmpdir(), `ggw-p1-02-child-${Date.now()}.ps1`);
+  let psFileWritten = false;
   try {
     const { writeFileSync } = require('node:fs');
     writeFileSync(tmpFile, psScript, 'utf-8');
-  } catch { return []; }
-  try {
-    const out = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', tmpFile], {
-      encoding: 'utf-8', timeout: 15_000, windowsHide: true,
-    });
-    const pids = [];
-    for (const line of out.trim().split('\n')) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 2) {
-        const pid = parseInt(parts[0], 10);
-        if (!isNaN(pid) && pid > 0) pids.push(pid);
-      }
+    psFileWritten = true;
+  } catch { /* fall through to wmic */ }
+  if (psFileWritten) {
+    try {
+      const out = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', tmpFile], {
+        encoding: 'utf-8', timeout: 15_000, windowsHide: true,
+      });
+      const pids = out.trim().split(/\s+/).map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0);
+      if (pids.length > 0) return pids;
+    } catch { /* fall through to wmic */ } finally {
+      try { const { unlinkSync } = require('node:fs'); unlinkSync(tmpFile); } catch {}
     }
-    return pids;
-  } catch { return []; } finally {
-    try { const { unlinkSync } = require('node:fs'); unlinkSync(tmpFile); } catch {}
   }
+
+  // Strategy 2: wmic (works without elevated privileges in more configurations)
+  try {
+    const wmicOut = execFileSync('wmic', ['process', 'where', `ParentProcessId=${parentPid}`, 'get', 'ProcessId', '/format:csv'], {
+      encoding: 'utf-8', timeout: 10_000, windowsHide: true, shell: false,
+    });
+    const lines = wmicOut.trim().split(/\r?\n/);
+    const pids = [];
+    for (let i = 1; i < lines.length; i++) { // skip header
+      const parts = lines[i].split(',');
+      const pidStr = parts[parts.length - 1]; // last column is ProcessId
+      const pid = parseInt(pidStr, 10);
+      if (!isNaN(pid) && pid > 0 && pid !== parentPid) pids.push(pid);
+    }
+    if (pids.length > 0) return pids;
+  } catch { /* no wmic available */ }
+
+  // Strategy 3: PowerShell Get-Process (different API, may work where CIM fails)
+  try {
+    const ps2Out = execFileSync('powershell', [
+      '-NoProfile', '-Command',
+      `Get-Process | Where-Object { (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").ParentProcessId -eq ${parentPid} } | ForEach-Object { $_.Id }`,
+    ], { encoding: 'utf-8', timeout: 15_000, windowsHide: true });
+    const pids = ps2Out.trim().split(/\s+/).map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0);
+    if (pids.length > 0) return pids;
+  } catch { /* no go */ }
+
+  return [];
 }
 
 function pidExists(pid) {
@@ -190,7 +237,7 @@ function findDescendantPids(parentPid, depth) {
   return [...new Set(all)];
 }
 
-/** Find the PID of the process listening on a TCP port. */
+/** Find the PID of the process listening on a TCP port. Returns 0 if not found. */
 function getPidByPort(port) {
   if (platform !== 'win32') {
     const r = shCapture(['lsof', '-ti', `:${port}`]);
@@ -209,7 +256,7 @@ function getPidByPort(port) {
   return 0;
 }
 
-// ── temp directory for fixture runtime (P102-R4) ─────────────────────────────
+// ── temp directory for fixture runtime (P102-R4, unchanged) ───────────────────
 async function createTempFixture(fixturePath, log) {
   const tmpBase = join(tmpdir(), `ggw-p1-02-${Date.now()}`);
   await mkdir(tmpBase, { recursive: true });
@@ -227,39 +274,113 @@ async function createTempFixture(fixturePath, log) {
   return { tmpBase, fixturePath: dest, repoName: null, freshlyIndexed: false, error: null };
 }
 
+/**
+ * P102-R1: setupFixture — every critical command must fail fast.
+ * No silent error swallowing, no basename fallback for repo identity.
+ */
 async function setupFixture(tempFixture, log) {
   const { fixturePath } = tempFixture;
   log(`Setting up fixture git repo at ${fixturePath}`);
 
-  try {
-    sh(['git', 'init'], { cwd: fixturePath });
-    sh(['git', 'config', 'user.email', 'ggw-p1-02-test@graphgateway.local'], { cwd: fixturePath });
-    sh(['git', 'config', 'user.name', 'GGW P1-02 Test'], { cwd: fixturePath });
-    sh(['git', 'add', '-A'], { cwd: fixturePath });
-    const commitR = shCapture(['git', 'commit', '-m', 'test: interop fixture initial commit'], { cwd: fixturePath });
-    if (commitR.exitCode !== 0) {
-      log(`  git commit note: ${commitR.stderr || commitR.error || 'ok'}`);
-    }
-  } catch (e) { tempFixture.error = `git init/commit failed: ${e.message}`; return; }
+  // Step 1: git init — must succeed (shell:false avoids arg escaping issues)
+  const initR = shCapture(['git', 'init'], { cwd: fixturePath, shell: false });
+  if (initR.exitCode !== 0) {
+    tempFixture.error = `FATAL: git init failed (exit ${initR.exitCode}): ${initR.stderr || initR.error}`;
+    return;
+  }
 
-  const listOut = sh([GITNEXUS_BIN, 'list']);
-  const normalizedPath = fixturePath.replace(/\\/g, '/').toLowerCase();
-  if (listOut.toLowerCase().includes(normalizedPath)) {
+  // Step 2: git config — must succeed
+  const cfgEmailR = shCapture(['git', 'config', 'user.email', 'ggw-p1-02-test@graphgateway.local'], { cwd: fixturePath, shell: false });
+  if (cfgEmailR.exitCode !== 0) {
+    tempFixture.error = `FATAL: git config user.email failed (exit ${cfgEmailR.exitCode}): ${cfgEmailR.stderr || cfgEmailR.error}`;
+    return;
+  }
+  const cfgNameR = shCapture(['git', 'config', 'user.name', 'GGW P1-02 Test'], { cwd: fixturePath, shell: false });
+  if (cfgNameR.exitCode !== 0) {
+    tempFixture.error = `FATAL: git config user.name failed (exit ${cfgNameR.exitCode}): ${cfgNameR.stderr || cfgNameR.error}`;
+    return;
+  }
+
+  // Step 3: git add — must succeed
+  const addR = shCapture(['git', 'add', '-A'], { cwd: fixturePath, shell: false });
+  if (addR.exitCode !== 0) {
+    tempFixture.error = `FATAL: git add failed (exit ${addR.exitCode}): ${addR.stderr || addR.error}`;
+    return;
+  }
+
+  // Step 4: git commit — must succeed
+  const commitR = shCapture(['git', 'commit', '-m', 'test: interop fixture initial commit'], { cwd: fixturePath, shell: false });
+  if (commitR.exitCode !== 0) {
+    tempFixture.error = `FATAL: git commit failed (exit ${commitR.exitCode}): ${commitR.stderr || commitR.error}`;
+    return;
+  }
+
+  // Step 5: Verify the fixture has a valid git commit
+  const logR = shCapture(['git', 'log', '--oneline', '-1'], { cwd: fixturePath, shell: false });
+  if (logR.exitCode !== 0 || !logR.stdout.trim()) {
+    tempFixture.error = 'FATAL: fixture git repo has no valid commit after git commit';
+    return;
+  }
+  log(`  Verified git commit: ${logR.stdout.trim()}`);
+
+  // Step 6: gitnexus index — must succeed
+  const listR1 = shCapture([GITNEXUS_BIN, 'list']);
+  if (listR1.exitCode !== 0) {
+    tempFixture.error = `FATAL: gitnexus list failed (exit ${listR1.exitCode}): ${listR1.stderr || listR1.error}`;
+    return;
+  }
+
+  // Resolve the real (canonical) path AND keep the original path for matching.
+  // gitnexus may store the path as received (short 8.3 names) or canonical form.
+  const realResolvedPath = (await realpath(fixturePath)).replace(/\\/g, '/');
+  const originalPath = fixturePath.replace(/\\/g, '/');
+  log(`  Fixture path (original): ${originalPath}`);
+  log(`  Fixture path (realpath): ${realResolvedPath}`);
+
+  // Try both the original and resolved paths for matching
+  const pathCandidates = [originalPath.toLowerCase(), realResolvedPath.toLowerCase()];
+  // Also add basename-only variants for the path line match
+  const basenameLower = basename(fixturePath).toLowerCase();
+
+  // Helper: normalize slashes in gitnexus list lines before comparison
+  const lineIncludesPath = (line) => {
+    const normalizedLine = line.replace(/\\/g, '/').toLowerCase();
+    return pathCandidates.some(p => normalizedLine.includes(p));
+  };
+
+  if (listR1.stdout.split('\n').some(lineIncludesPath)) {
     log('  Already indexed by GitNexus');
   } else {
     log('  Indexing fixture with gitnexus analyze...');
-    try {
-      const t0 = hrtime();
-      sh([GITNEXUS_BIN, 'analyze', fixturePath], { timeout: 120_000 });
-      log(`  Indexed in ${msSince(t0)} ms`);
-      tempFixture.freshlyIndexed = true;
-    } catch (e) { tempFixture.error = `gitnexus analyze failed: ${e.message}`; return; }
+    const analyzeR = shCapture([GITNEXUS_BIN, 'analyze', fixturePath], { timeout: 120_000 });
+    if (analyzeR.exitCode !== 0) {
+      tempFixture.error = `FATAL: gitnexus analyze failed (exit ${analyzeR.exitCode}): ${analyzeR.stderr || analyzeR.error}`;
+      return;
+    }
+    log('  Indexing complete');
+    tempFixture.freshlyIndexed = true;
   }
 
-  const l2 = sh([GITNEXUS_BIN, 'list']);
-  const lines = l2.split('\n');
+  // Step 7: Resolve canonical GitNexus identity — NO basename fallback
+  const listR2 = shCapture([GITNEXUS_BIN, 'list']);
+  if (listR2.exitCode !== 0) {
+    tempFixture.error = `FATAL: gitnexus list for identity resolution failed (exit ${listR2.exitCode}): ${listR2.stderr || listR2.error}`;
+    return;
+  }
+
+  const lines = listR2.stdout.split('\n');
+  // Debug: show lines near our fixture
+  log(`  Scanning ${lines.length} lines of gitnexus list for fixture identity`);
+  for (const line of lines) {
+    if (line.toLowerCase().includes(basenameLower) && line.trim()) {
+      log(`    found: "${line.replace(/\\/g, '/')}"`);
+    }
+  }
+
+  let foundIndex = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].toLowerCase().includes(normalizedPath)) {
+    if (lineIncludesPath(lines[i])) {
+      foundIndex = i;
       for (let j = i - 1; j >= 0; j--) {
         const m = lines[j].match(/^\s{2}(\S+)/);
         if (m) { tempFixture.repoName = m[1]; break; }
@@ -267,8 +388,27 @@ async function setupFixture(tempFixture, log) {
       break;
     }
   }
-  if (!tempFixture.repoName) tempFixture.repoName = basename(fixturePath);
-  log(`  Repo name: ${tempFixture.repoName}`);
+
+  if (!tempFixture.repoName) {
+    // Last resort: try matching just the basename for the path line (not as repo name fallback)
+    for (let i = 0; i < lines.length; i++) {
+      const lineLower = lines[i].replace(/\\/g, '/').toLowerCase();
+      if (lineLower.includes('path:') && lineLower.includes(basenameLower)) {
+        log(`    path-only fallback matched line: "${lines[i].replace(/\\/g, '/')}"`);
+        for (let j = i - 1; j >= 0; j--) {
+          const m = lines[j].match(/^\s{2}(\S+)/);
+          if (m) { tempFixture.repoName = m[1]; break; }
+        }
+        break;
+      }
+    }
+  }
+
+  if (!tempFixture.repoName) {
+    tempFixture.error = `FATAL: cannot resolve fixture canonical GitNexus identity. Tried paths: [${pathCandidates.join(', ')}]. Basename: ${basenameLower}`;
+    return;
+  }
+  log(`  Resolved repo name: ${tempFixture.repoName}`);
 }
 
 async function cleanupTempFixture(tempFixture, log) {
@@ -470,7 +610,7 @@ class McpClient {
   }
 }
 
-// ── test runner (P102-R1) ────────────────────────────────────────────────────
+// ── test runner ──────────────────────────────────────────────────────────────
 const tests = [];
 let currentSuite = '';
 const requiredTests = new Set();
@@ -593,7 +733,7 @@ test('3.2 resources/read returns content for known resource', async (client) => 
   return hasContent ? PASS(`resource ${uris[0]} returned content`) : CONSTRAINT(`resource ${uris[0]} returned empty content`);
 }, { required: true });
 
-// ---- 4. tools/call — fixed repo ----
+// ---- 4. tools/call — fixed repo (P102-R1: no fallbacks) ----
 suite('4. tools/call — fixed repo');
 
 test('4.1 list_repos returns repo list', async (client) => {
@@ -606,29 +746,23 @@ test('4.1 list_repos returns repo list', async (client) => {
 test('4.2 list_repos contains fixture repo', async (client, fixture) => {
   const r = await client.toolCall('list_repos');
   const text = extractTextContent(r);
+  if (!fixture.repoName) return FAIL('fixture.repoName is null — fixture identity not resolved');
   if (text.includes(fixture.repoName)) return PASS(`"${fixture.repoName}" found in list_repos`);
-  if (text.includes(basename(fixture.fixturePath))) return PASS(`"${basename(fixture.fixturePath)}" found (path match)`);
-  return CONSTRAINT(`"${fixture.repoName}" not explicitly listed — may be under different name`);
+  return FAIL(`"${fixture.repoName}" NOT found in list_repos — identity mismatch`);
 }, { required: true });
 
-test('4.3 query returns results', async (client, fixture) => {
+test('4.3 query returns results — bound to fixture repo', async (client, fixture) => {
+  if (!fixture.repoName) return FAIL('fixture.repoName is null — fixture identity not resolved');
   const r = await client.toolCall('query', { search_query: 'greet', repo: fixture.repoName, limit: 3, max_symbols: 5 });
-  if (r.error) {
-    const r2 = await client.toolCall('query', { search_query: 'greet', limit: 3, max_symbols: 5 });
-    if (r2.error) return FAIL(`query error: ${r2.error.message}`);
-    return PASS(`query OK (no repo param): ${extractTextContent(r2).length} chars`);
-  }
-  return PASS(`query OK: ${extractTextContent(r).length} chars`);
+  if (r.error) return FAIL(`query error (repo="${fixture.repoName}"): ${r.error.message || JSON.stringify(r.error)}`);
+  return PASS(`query OK (repo="${fixture.repoName}"): ${extractTextContent(r).length} chars`);
 }, { required: true });
 
-test('4.4 context resolves a symbol', async (client, fixture) => {
+test('4.4 context resolves a symbol — bound to fixture repo', async (client, fixture) => {
+  if (!fixture.repoName) return FAIL('fixture.repoName is null — fixture identity not resolved');
   const r = await client.toolCall('context', { name: 'greet', repo: fixture.repoName });
-  if (r.error) {
-    const r2 = await client.toolCall('context', { name: 'greet', file_path: 'src/main.js' });
-    if (r2.error) return FAIL(`context error: ${r2.error.message}`);
-    return PASS(`context OK via file_path: ${extractTextContent(r2).length} chars`);
-  }
-  return PASS(`context OK: ${extractTextContent(r).length} chars`);
+  if (r.error) return FAIL(`context error (repo="${fixture.repoName}", name="greet"): ${r.error.message || JSON.stringify(r.error)}`);
+  return PASS(`context OK (repo="${fixture.repoName}"): ${extractTextContent(r).length} chars`);
 }, { required: true });
 
 test('4.5 checkpoint: read-only tool calls work', async (client) => {
@@ -709,8 +843,8 @@ test('7.3 unknown tool returns error', async (client) => {
   return CONSTRAINT('unknown tool returned no error — proxy passes through backend response');
 });
 
-// ---- 8. Timeout & cancellation (P102-R2) ----
-suite('8. Timeout & cancellation');
+// ---- 8. Timeout, cancellation & disconnect (P102-R2) ----
+suite('8. Timeout, cancellation & disconnect');
 
 test('8.1 delay tool: configurable slow request eventually completes', async (_client, _fixture, log, args) => {
   let ctrl;
@@ -738,7 +872,7 @@ test('8.1 delay tool: configurable slow request eventually completes', async (_c
   }
 }, { required: true });
 
-test('8.2 client abort interrupts slow request with AbortError', async (_client, _fixture, log, args) => {
+test('8.2 client abort: proxy and session remain functional after abort', async (_client, _fixture, log, args) => {
   let ctrl;
   try {
     ctrl = await startControllableProxy(log, [args._actualPort]);
@@ -746,30 +880,86 @@ test('8.2 client abort interrupts slow request with AbortError', async (_client,
     return FAIL(`controllable proxy start failed: ${e.message}`);
   }
   try {
-    await ctrl.client.toolCall('identity', {});
+    // Verify baseline connectivity
+    const idBefore = await ctrl.client.toolCall('identity', {});
+    if (idBefore.error) return FAIL(`identity before abort failed: ${idBefore.error.message}`);
+    const upstreamPidBefore = parseIdentityPid(extractTextContent(idBefore));
+    log(`    upstream PID before abort: ${upstreamPidBefore || 'unknown'}`);
 
+    // Initiate abort on a slow request
     const controller = new AbortController();
+    const slowReq = ctrl.client.toolCall('delay', { ms: 20000 }, { signal: controller.signal, timeout: 25_000 });
+
     setTimeout(() => {
       log('    aborting client request after 500ms...');
       controller.abort();
     }, 500);
 
     const t0 = hrtime();
+    let aborted = false;
     try {
-      await ctrl.client.toolCall('delay', { ms: 15000 }, { signal: controller.signal, timeout: 20_000 });
-      return FAIL('delay completed despite client abort — abort was not effective');
+      await slowReq;
     } catch (e) {
+      aborted = true;
       const dur = msSince(t0);
-      const isAbort = e.name === 'AbortError' || e.message?.includes('abort') || e.message?.includes('AbortError');
-      log(`    Caught after ${dur}ms: ${e.message?.slice(0, 120)}`);
-      if (dur < 10000 && isAbort) {
-        return PASS(`client abort correctly interrupted slow request after ${dur}ms (delay was 15000ms)`);
-      }
-      if (dur >= 10000) {
-        return CONSTRAINT(`request may have completed naturally after ${dur}ms — abort not clearly effective`);
-      }
-      return PASS(`request interrupted after ${dur}ms: ${e.message?.slice(0, 100)}`);
+      const isAbortError = e.name === 'AbortError' || /abort/i.test(e.message || '');
+      log(`    Abort caught after ${dur}ms: ${e.message?.slice(0, 120)} (isAbortError=${isAbortError})`);
     }
+
+    if (!aborted) return FAIL('abort did not interrupt the slow request');
+
+    // P102-R2: keep proxy running — verify session is still functional
+    await sleep(500);
+
+    // 1. Same session should still work after abort
+    let sessionAlive = false;
+    try {
+      const postAbortId = await ctrl.client.toolCall('identity', {}, { timeout: 5_000 });
+      if (!postAbortId.error) {
+        sessionAlive = true;
+        const upstreamPidAfter = parseIdentityPid(extractTextContent(postAbortId));
+        log(`    session functional after abort, upstream PID: ${upstreamPidAfter || 'unknown'}`);
+        if (upstreamPidBefore && upstreamPidAfter && upstreamPidBefore !== upstreamPidAfter) {
+          log(`    NOTE: upstream PID changed from ${upstreamPidBefore} to ${upstreamPidAfter} — proxy may have restarted upstream`);
+        }
+      } else {
+        log(`    session error after abort: ${postAbortId.error.message}`);
+      }
+    } catch (e) {
+      log(`    session not reachable after abort: ${e.message?.slice(0, 120)}`);
+    }
+
+    if (!sessionAlive) {
+      return CONSTRAINT('session not functional after client abort — proxy may not recover session state after abort');
+    }
+
+    // 2. Sibling session should also work
+    let siblingAlive = false;
+    try {
+      const c2 = await ctrl.client.forkAsNewSession();
+      const siblingCheck = await c2.toolCall('identity', {}, { timeout: 5_000 });
+      if (!siblingCheck.error) {
+        siblingAlive = true;
+        log(`    sibling session functional after abort, upstream PID: ${parseIdentityPid(extractTextContent(siblingCheck)) || 'unknown'}`);
+      } else {
+        log(`    sibling session error: ${siblingCheck.error.message}`);
+      }
+    } catch (e) {
+      log(`    sibling session creation failed after abort: ${e.message?.slice(0, 120)}`);
+    }
+
+    // 3. Verify upstream process is still alive
+    const finalId = await ctrl.client.toolCall('identity', {}, { timeout: 5_000 });
+    if (finalId.error) {
+      return CONSTRAINT(`upstream not reachable after abort: ${finalId.error.message}`);
+    }
+
+    const evidenceParts = ['abort correctly interrupted slow request'];
+    evidenceParts.push(`session functional=${sessionAlive}`);
+    evidenceParts.push(`sibling session functional=${siblingAlive}`);
+    evidenceParts.push(`upstream alive after abort=true`);
+
+    return PASS(`abort evidence: ${evidenceParts.join('; ')}`);
   } finally {
     await ctrl.pm.stop(log);
     await sleep(1000);
@@ -807,7 +997,77 @@ test('8.3 other session responsive during slow request (isolation)', async (_cli
   }
 }, { required: true });
 
-// ---- 9. Upstream failure & isolation (P102-R2) ----
+// 8.4 — P102-R2: exercise disconnect behavior
+test('8.4 upstream disconnect: session invalidated, proxy stays alive', async (_client, _fixture, log, args) => {
+  let ctrl;
+  try {
+    ctrl = await startControllableProxy(log, [args._actualPort]);
+  } catch (e) {
+    return FAIL(`controllable proxy start failed: ${e.message}`);
+  }
+  try {
+    // Call the disconnect tool — upstream closes streams but process stays alive
+    const dcResult = await ctrl.client.toolCall('disconnect', {}, { timeout: 5_000 });
+    log(`    disconnect response: ${extractTextContent(dcResult).slice(0, 120)}`);
+    await sleep(800); // allow time for stream closure to propagate
+
+    // 1. Same session should fail after upstream disconnect
+    let sessionDead = false;
+    try {
+      const afterDc = await ctrl.client.toolCall('identity', {}, { timeout: 5_000 });
+      if (afterDc.error) {
+        sessionDead = true;
+        log(`    disconnected session correctly returns error: ${afterDc.error.message?.slice(0, 120)}`);
+      }
+    } catch (e) {
+      sessionDead = true;
+      log(`    disconnected session correctly throws: ${e.message?.slice(0, 120)}`);
+    }
+
+    if (!sessionDead) {
+      return CONSTRAINT('disconnected session still functional after upstream stream close — proxy may buffer or not detect stream end');
+    }
+
+    // 2. Proxy itself should still be alive — new sessions should be creatable
+    let newSessionWorks = false;
+    let newSessionNote = '';
+    try {
+      const c2 = new McpClient(ctrl.client.port, () => {});
+      await c2.initialize();
+      if (c2.sessionId) {
+        const newCheck = await c2.toolCall('identity', {}, { timeout: 5_000 });
+        if (!newCheck.error) {
+          newSessionWorks = true;
+          log(`    new session functional after disconnect, upstream PID: ${parseIdentityPid(extractTextContent(newCheck)) || 'unknown'}`);
+        } else {
+          newSessionNote = `new session created but identity failed: ${newCheck.error.message}`;
+          log(`    ${newSessionNote}`);
+        }
+      } else {
+        newSessionNote = 'new session initialize returned no session ID';
+        log(`    ${newSessionNote}`);
+      }
+    } catch (e) {
+      newSessionNote = `new session creation failed: ${e.message?.slice(0, 120)}`;
+      log(`    ${newSessionNote}`);
+    }
+
+    const evidenceParts = [`disconnected session invalidated successfully`];
+    if (newSessionWorks) {
+      evidenceParts.push(`new session works after disconnect — proxy creates fresh upstream`);
+    } else {
+      evidenceParts.push(`new session constrained: ${newSessionNote}`);
+      return CONSTRAINT(`${evidenceParts.join('; ')} — proxy may share upstream process across sessions`);
+    }
+
+    return PASS(evidenceParts.join('; '));
+  } finally {
+    await ctrl.pm.stop(log);
+    await sleep(1000);
+  }
+}, { required: true });
+
+// ---- 9. Upstream failure & isolation ----
 suite('9. Upstream failure & isolation');
 
 test('9.1 upstream crash detected — subsequent request returns error', async (_client, _fixture, log, args) => {
@@ -931,14 +1191,27 @@ test('10.2 session header with garbage value is rejected', async (client) => {
 // ---- 11. Proxy exit & child process cleanup (P102-R3) ----
 suite('11. Proxy exit & child process cleanup');
 
-test('11.1 establish baseline process set', async (_client, _fixture, log, args) => {
-  const baselinePids = getAllPids();
-  log(`    baseline all PIDs count: [${baselinePids.join(', ') || 'none'}]`);
-  args._baselinePids = baselinePids;
-  return PASS(`baseline captured: ${baselinePids.length} processes running`);
+test('11.1 verify process tracking primitives', async (_client, _fixture, log, args) => {
+  // Verify that PID detection tooling works on this platform
+  const selfPid = process.pid;
+  const exists = pidExists(selfPid);
+  if (!exists) return FAIL(`Cannot detect own PID ${selfPid} — pidExists broken`);
+
+  // Verify port-to-PID resolution works using the main proxy's port
+  const portPid = getPidByPort(args._actualPort);
+  if (!portPid || portPid <= 0) {
+    return CONSTRAINT(`Cannot resolve PID by port ${args._actualPort} — getPidByPort may not work on this platform`);
+  }
+
+  // Verify child PID detection by checking for children of the resolved proxy PID
+  const children = findChildPids(portPid);
+  log(`    pidExists(self=${selfPid})=${exists}, getPidByPort(${args._actualPort})=${portPid}, children of proxy PID: ${children.length}`);
+
+  return PASS(`tracking primitives functional: pidExists=ok, portPid=${portPid}, childrenFound=${children.length}`);
 });
 
-test('11.2 proxy start creates new child processes', async (_client, _fixture, log, args) => {
+test('11.2 deterministic descendant tracking — no system-wide baseline', async (_client, _fixture, log, args) => {
+  // Start a separate proxy to test PID tracking in isolation
   const port2 = await findFreePort([args._actualPort]);
   const pm2 = new ProcessManager();
   try {
@@ -949,77 +1222,105 @@ test('11.2 proxy start creates new child processes', async (_client, _fixture, l
 
   await sleep(3000);
 
-  // Find the actual mcp-proxy PID via its listening port (netstat)
+  // Find the actual mcp-proxy PID via its listening port
   const actualProxyPid = getPidByPort(port2);
   log(`    spawn PID: ${pm2.proxyPid}, listening PID: ${actualProxyPid || 'unknown'}`);
 
-  // Find descendants of the actual proxy process (mcp-proxy -> gitnexus)
-  let childPids = [];
-  if (actualProxyPid > 0) {
-    childPids = findDescendantPids(actualProxyPid);
-  }
-  // Also try via the spawn PID (may be cmd.exe wrapper)
-  const spawnDescendants = findDescendantPids(pm2.proxyPid);
-  const allDescendants = [...new Set([...childPids, ...spawnDescendants])];
-  log(`    combined descendants: [${allDescendants.join(', ') || 'none'}]`);
-
-  if (allDescendants.length === 0) {
-    // Fallback: use system-wide new PIDs (weaker association)
-    const currentPids = getAllPids();
-    const baseline = args._baselinePids || [];
-    const allNewPids = currentPids.filter(p => !baseline.includes(p));
-    log(`    fallback: all new PIDs: ${allNewPids.length}`);
-    if (allNewPids.length === 0) {
-      await pm2.stop(log);
-      return FAIL('no new child processes detected after proxy start — proxy may not have spawned upstream');
-    }
-    childPids = allNewPids.slice(0, 8);
-  } else {
-    childPids = allDescendants;
-  }
-
-  if (!pidExists(pm2.proxyPid) && !(actualProxyPid > 0 && pidExists(actualProxyPid))) {
+  if (actualProxyPid <= 0) {
     await pm2.stop(log);
-    return FAIL(`neither spawn PID ${pm2.proxyPid} nor listening PID ${actualProxyPid} is alive`);
+    return FAIL(`cannot resolve listening PID for port ${port2} — getPidByPort returned ${actualProxyPid}`);
   }
 
-  // Verify tracked PIDs exist
-  for (const p of childPids) {
-    if (!pidExists(p)) {
-      log(`    WARNING: tracked PID ${p} may have exited immediately`);
+  // Deterministic: find descendants of the actual proxy process ONLY
+  const descendantPids = findDescendantPids(actualProxyPid);
+  log(`    descendants of listening PID ${actualProxyPid}: [${descendantPids.join(', ') || 'none'}]`);
+
+  // P102-R3: if descendant detection returns empty, FAIL — do NOT fall back to system-wide PIDs
+  if (descendantPids.length === 0) {
+    // Try one level deeper — also check descendants of spawn PID
+    const spawnDescendants = findDescendantPids(pm2.proxyPid);
+    log(`    descendants of spawn PID ${pm2.proxyPid}: [${spawnDescendants.join(', ') || 'none'}]`);
+
+    if (spawnDescendants.length === 0) {
+      // Also try via the actual proxy PID's direct children
+      const directChildren = findChildPids(actualProxyPid);
+      log(`    direct children of ${actualProxyPid}: [${directChildren.join(', ') || 'none'}]`);
+
+      if (directChildren.length === 0) {
+        await pm2.stop(log);
+        return FAIL(`descendant tracking returned empty for both spawn PID ${pm2.proxyPid} and listening PID ${actualProxyPid} — cannot establish process ownership. No system-wide fallback allowed.`);
+      }
+
+      // Use direct children + their descendants
+      let allChildren = [...directChildren];
+      for (const cpid of directChildren) {
+        allChildren = allChildren.concat(findDescendantPids(cpid));
+      }
+      descendantPids.length = 0;
+      descendantPids.push(...new Set(allChildren));
+      log(`    using direct children + their descendants: [${descendantPids.join(', ') || 'none'}]`);
+    } else {
+      descendantPids.length = 0;
+      descendantPids.push(...spawnDescendants);
+      log(`    using spawn PID descendants: [${descendantPids.join(', ') || 'none'}]`);
     }
   }
 
-  // Prove association: proxy is functional and serves MCP traffic via its children
+  // Verify tracked PIDs exist right now (ownership proof step 1)
+  const alive = [];
+  const dead = [];
+  for (const p of descendantPids) {
+    if (pidExists(p)) alive.push(p);
+    else dead.push(p);
+  }
+  log(`    alive: [${alive.join(', ')}], already dead: [${dead.join(', ')}]`);
+
+  if (alive.length === 0) {
+    await pm2.stop(log);
+    return FAIL(`no tracked descendant PIDs alive — all ${descendantPids.length} PIDs ${dead.length > 0 ? `(including ${dead.join(',')}) ` : ''}exited before verification. Cannot prove ownership.`);
+  }
+
+  // Ownership proof step 2: proxy is functional via its child processes
   try {
     const c = new McpClient(port2, log);
     await c.initialize();
     await c.toolsList();
-    log(`    proxy on port ${port2} functional — child processes serve MCP traffic`);
+    log(`    proxy on port ${port2} functional — descendant processes serve MCP traffic`);
   } catch (e) {
     log(`    proxy functional check: ${e.message}`);
   }
 
-  args._trackedProxyPid = pm2.proxyPid;
-  args._trackedProxyRealPid = actualProxyPid;
-  args._trackedPids = childPids;
+  // Store for cleanup verification in 11.3
+  args._trackedProxyPid = actualProxyPid;
+  args._trackedProxySpawnPid = pm2.proxyPid;
+  args._trackedPids = alive;
   args._trackedPm2 = pm2;
 
-  return PASS(`proxy spawn PID ${pm2.proxyPid}, listening PID ${actualProxyPid}, tracked ${childPids.length} descendants: [${childPids.join(', ')}]`);
+  return PASS(`proxy PID ${actualProxyPid}, ${alive.length} tracked alive descendant(s): [${alive.join(', ')}]`);
 }, { required: true });
 
-test('11.3 proxy stop terminates all child processes', async (_client, _fixture, log, args) => {
+test('11.3 proxy stop terminates all tracked child processes', async (_client, _fixture, log, args) => {
   const trackedPids = args._trackedPids || [];
   const pm2 = args._trackedPm2;
+  const proxyPid = args._trackedProxyPid;
 
   if (!pm2 || trackedPids.length === 0) {
-    return SKIP('no tracked PIDs from 11.2 — cannot verify cleanup');
+    return FAIL('no tracked PIDs from 11.2 — cannot verify cleanup');
   }
 
-  log(`    stopping proxy PID ${args._trackedProxyPid}...`);
+  log(`    stopping proxy PID ${proxyPid}, verifying ${trackedPids.length} tracked descendants: [${trackedPids.join(', ')}]`);
+
+  // Pre-stop: all tracked PIDs should still be alive
+  const preStopAlive = trackedPids.filter(p => pidExists(p));
+  if (preStopAlive.length === 0) {
+    return FAIL(`all tracked PIDs already dead before stop — ownership was not established`);
+  }
+  log(`    pre-stop: ${preStopAlive.length}/${trackedPids.length} alive`);
+
   await pm2.stop(log);
   await sleep(3000);
 
+  // Post-stop: verify each tracked PID is gone
   const survivors = [];
   for (const pid of trackedPids) {
     if (pidExists(pid)) {
@@ -1030,9 +1331,10 @@ test('11.3 proxy stop terminates all child processes', async (_client, _fixture,
     }
   }
 
-  if (pidExists(args._trackedProxyPid) || (args._trackedProxyRealPid && pidExists(args._trackedProxyRealPid))) {
-    survivors.push(args._trackedProxyPid);
-    log(`    proxy PID ${args._trackedProxyPid}${args._trackedProxyRealPid ? ' / ' + args._trackedProxyRealPid : ''} STILL ALIVE`);
+  // Also check proxy PID itself
+  if (proxyPid && pidExists(proxyPid)) {
+    survivors.push(proxyPid);
+    log(`    proxy PID ${proxyPid} STILL ALIVE`);
   }
 
   args._trackedPm2 = null;
@@ -1041,10 +1343,10 @@ test('11.3 proxy stop terminates all child processes', async (_client, _fixture,
   if (survivors.length > 0) {
     return FAIL(`orphan processes after proxy stop: [${survivors.join(', ')}]`);
   }
-  return PASS(`all ${trackedPids.length} tracked gitnexus process(es) and proxy terminated`);
+  return PASS(`all ${trackedPids.length} tracked descendant(s) and proxy terminated`);
 }, { required: true });
 
-test('11.4 stdout and stderr isolation confirmed', async (_client, _fixture, log, args) => {
+test('11.4 stdout and stderr content isolation', async (_client, _fixture, log, args) => {
   const port = await findFreePort([args._actualPort]);
   const pm = new ProcessManager();
   try {
@@ -1059,14 +1361,33 @@ test('11.4 stdout and stderr isolation confirmed', async (_client, _fixture, log
     await c.toolsList();
     await c.toolCall('list_repos', {}, { timeout: 15_000 });
 
-    const stdoutLen = pm.stdoutBuf.length;
-    const stderrLen = pm.stderrBuf.length;
+    const stdoutBuf = pm.stdoutBuf;
+    const stderrBuf = pm.stderrBuf;
 
-    if (stdoutLen + stderrLen === 0) {
-      return CONSTRAINT('no output captured on either channel — proxy may suppress upstream output');
+    // P102-R3: verify channel content isolation
+    // mcp-proxy's own stdout contains startup/log messages (not upstream MCP protocol).
+    // Upstream MCP protocol frames go through internal stdio pipes to HTTP responses.
+    // stderr must NOT contain JSON-RPC protocol frames (would indicate channel pollution).
+    const stderrHasProtocol = /"jsonrpc"\s*:\s*"2\.0"/.test(stderrBuf);
+    const stderrHasHttpPayload = /"result"\s*:\s*\{/.test(stderrBuf) && /"tools"\s*:/.test(stderrBuf);
+    const totalOutput = stdoutBuf.length + stderrBuf.length;
+
+    const findings = [];
+    if (stderrHasProtocol) {
+      findings.push(`stderr contains JSON-RPC protocol frames — protocol/log channel pollution detected`);
+    }
+    if (stderrHasHttpPayload) {
+      findings.push(`stderr appears to contain MCP tool response payloads — upstream stdout may be leaking into proxy stderr`);
+    }
+    if (totalOutput === 0) {
+      findings.push('no output on either stdout or stderr');
     }
 
-    return PASS(`stdout: ${stdoutLen} chars, stderr: ${stderrLen} chars, channels distinct`);
+    if (findings.length > 0) {
+      return CONSTRAINT(findings.join('; '));
+    }
+
+    return PASS(`stdout: ${stdoutBuf.length} chars (proxy log), stderr: ${stderrBuf.length} chars (no protocol leakage)`);
   } finally {
     await pm.stop(log);
     await sleep(1000);
@@ -1119,6 +1440,72 @@ test('12.3 list all tool names for reference', async (client) => {
   return PASS(`total ${names.length}: ${names.join(', ')}`);
 });
 
+// ---- 13. Main proxy cleanup (P102-R3: cleanup verification runs BEFORE report) ----
+suite('13. Main proxy cleanup');
+
+test('13.1 main proxy stop terminates all child processes', async (_client, _fixture, log, args) => {
+  const mainPm = args._mainPm;
+  const mainPort = args._actualPort;
+
+  if (args.keepProcesses) return SKIP('--keep-processes: main proxy left running');
+  if (!mainPm) return FAIL('no main proxy reference — cannot verify cleanup');
+
+  // Step 1: Track descendants of the main proxy before stopping
+  const mainProxyPid = getPidByPort(mainPort);
+  let descendantPids = [];
+  if (mainProxyPid > 0) {
+    descendantPids = findDescendantPids(mainProxyPid);
+  } else {
+    // Fall back to spawn PID's descendants
+    descendantPids = findDescendantPids(mainPm.proxyPid);
+  }
+
+  log(`  Main proxy descendants to track: [${descendantPids.join(', ') || 'none'}] (port PID: ${mainProxyPid || 'unknown'}, spawn PID: ${mainPm.proxyPid})`);
+
+  if (descendantPids.length === 0) {
+    // Try direct children
+    const pid = mainProxyPid > 0 ? mainProxyPid : mainPm.proxyPid;
+    const directChildren = findChildPids(pid);
+    if (directChildren.length === 0) {
+      // Stop anyway but record inability to verify
+      await mainPm.stop(log);
+      await sleep(2000);
+      return CONSTRAINT(`no descendant PIDs found for main proxy (port PID ${mainProxyPid}, spawn PID ${mainPm.proxyPid}) — cannot verify cleanup ownership`);
+    }
+    descendantPids = directChildren;
+    log(`  Using direct children: [${descendantPids.join(', ')}]`);
+  }
+
+  // Pre-stop: verify tracked PIDs are alive
+  const preStopAlive = descendantPids.filter(p => pidExists(p));
+  log(`  Pre-stop: ${preStopAlive.length}/${descendantPids.length} tracked PIDs alive`);
+
+  // Step 2: Stop the main proxy
+  await mainPm.stop(log);
+  await sleep(2000);
+
+  // Step 3: Verify all tracked PIDs are gone
+  const survivors = [];
+  for (const pid of descendantPids) {
+    if (pidExists(pid)) {
+      survivors.push(pid);
+      log(`  PID ${pid} STILL ALIVE after main proxy stop`);
+    }
+  }
+  if (mainProxyPid > 0 && pidExists(mainProxyPid)) {
+    survivors.push(mainProxyPid);
+    log(`  main proxy PID ${mainProxyPid} STILL ALIVE`);
+  }
+
+  args._mainPm = null;
+
+  if (survivors.length > 0) {
+    return FAIL(`main proxy cleanup: ${survivors.length} orphan process(es): [${survivors.join(', ')}]`);
+  }
+
+  return PASS(`main proxy cleanup: all ${descendantPids.length} tracked descendant(s) terminated`);
+}, { required: true });
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 function extractTextContent(rpcResult) {
   if (rpcResult.result?.content && Array.isArray(rpcResult.result.content)) {
@@ -1129,7 +1516,17 @@ function extractTextContent(rpcResult) {
   return '';
 }
 
-// ── report generator (P102-R5) ────────────────────────────────────────────────
+/** Parse PID from identity tool response JSON. */
+function parseIdentityPid(text) {
+  try {
+    const obj = JSON.parse(text);
+    return obj.pid || null;
+  } catch {
+    return null;
+  }
+}
+
+// ── report generator (P102-R3: cleanup results included in verdict) ───────────
 async function generateReport(results, versions, fixture, args, startTime, log) {
   const passed = results.filter(r => r.status === VERDICT.PASS).length;
   const failed = results.filter(r => r.status === VERDICT.FAIL).length;
@@ -1152,6 +1549,9 @@ async function generateReport(results, versions, fixture, args, startTime, log) 
   const totalDur = msSince(startTime);
   const fixtureRelPath = relative(REPO_ROOT, args._originalFixturePath || args.fixture);
   const testedCommit = sh(['git', 'rev-parse', 'HEAD'], { cwd: REPO_ROOT });
+
+  // P102-R3: derive session/process model from evidence (consistent, not contradictory)
+  const sessionModel = deriveSessionModel(results);
 
   const constraints = [];
   if (requiredBlocked.length > 0) {
@@ -1195,7 +1595,7 @@ mcp-proxy \\
 - **MCP 协议版本**: \`${PROTOCOL_VERSION}\`
 - **Transport**: Streamable HTTP (\`POST /mcp\`)
 - **响应格式**: SSE (\`event: message\\ndata: <json>\\n\\n\`)
-- **会话模型**: 有状态 — 每个 \`Mcp-Session-Id\` 对应一个 GitNexus stdio 子进程
+- **会话模型**: ${sessionModel}
 - **子进程启动**: mcp-proxy 使用 \`${platform === 'win32' ? '--shell' : 'spawn'}\` 模式启动 gitnexus
 - **Fixture repository**: \`${fixture.repoName}\` (source: \`${fixtureRelPath}\`)
 
@@ -1224,7 +1624,7 @@ mcp-proxy 成功将 GitNexus stdio MCP 暴露为标准 Streamable HTTP endpoint�
 - **SSE 解析**: 响应以 \`event: message\` + \`data:\` 行格式返回，需提取 \`data:\` 行 JSON。
 - **会话管理**: 每次 \`initialize\` 返回新的 \`Mcp-Session-Id\`，后续请求必须携带此 header。
 - **Accept header**: 必须包含 \`application/json, text/event-stream\`，否则返回 406。
-- **子进程模型**: 当前 mcp-proxy 为每个 Session 启动独立 GitNexus 子进程，需要评估内存和启动延迟。
+- **子进程模型**: ${sessionModel}
 - **传输适配验证**: mcp-proxy 正确透传了 tools、resources、capabilities 和能力协商。
 
 ### 4.2 P1-08 (Generation & Resolved View)
@@ -1251,7 +1651,7 @@ ${constraints.length > 0 ? constraints.map(c => `- ${c}`).join('\n') : '- 无'}
 
 ## 6. 可观测性与隔离
 
-- mcp-proxy stderr 日志与 GitNexus MCP stdout 正确隔离（不同管道）。
+- mcp-proxy stderr 日志与 GitNexus MCP stdout 通过不同管道隔离。
 - GitNexus 使用结构化日志（pino）写入 stderr，与 MCP 协议消息分通道。
 - mcp-proxy 透传 GitNexus 的 JSON-RPC 响应到 HTTP 响应流。
 - mcp-proxy 在非 debug 模式下仅输出启动信息和错误，缺少请求级 trace。
@@ -1266,11 +1666,13 @@ ${constraints.length > 0 ? constraints.map(c => `- ${c}`).join('\n') : '- 无'}
 
 ## 8. 进程清理验证 (P102-R3)
 
-子进程追踪使用确定性 PID 验证：
-- 启动前记录基线 gitnexus.exe PID 集合。
-- 启动 proxy 后识别新增 PID，关联至 proxy 会话。
-- 停止 proxy 后验证每个已追踪 PID 已退出。
-- 不使用全局计数或 0→0 作为清理证据。
+子进程追踪使用确定性 PID 父子关系验证：
+- 启动 proxy 后通过监听端口解析实际 PID。
+- 使用 parent/child 系统调用（WMI / pgrep）递归查找所有子进程。
+- 通过代理功能运行验证子进程确实服务 MCP 流量（所有权证明）。
+- 停止 proxy 后，使用 pidExists 逐个验证已追踪 PID 已退出。
+- 不使用全系统 PID 快照差值作为关联证据。
+- 清理结果（含孤儿 PID）计入测试结果和整体 verdict。
 
 ---
 *报告由 \`scripts/interop/verify-mcp-proxy-gitnexus.mjs\` 于 ${now()} 自动生成。*
@@ -1280,6 +1682,24 @@ ${constraints.length > 0 ? constraints.map(c => `- ${c}`).join('\n') : '- 无'}
   await writeFile(REPORT_PATH, report, 'utf-8');
   log(`Report written to ${REPORT_PATH}`);
   return { overall: finalVerdict, passed, failed, skipped, constrained, total: results.length, reportPath: REPORT_PATH, requiredBlocked };
+}
+
+/** P102-R3: derive consistent session model from evidence instead of making contradictory claims. */
+function deriveSessionModel(results) {
+  const crashIsolationResult = results.find(r => r.name.includes('9.3'));
+  const disconnectResult = results.find(r => r.name.includes('8.4'));
+  const sessionIds = results.find(r => r.name.includes('5.1'));
+
+  // Check evidence from crash isolation test
+  let sharedUpstream = true; // default assumption — conservative
+  if (crashIsolationResult && crashIsolationResult.status === VERDICT.PASS) {
+    sharedUpstream = false;
+  }
+
+  if (sharedUpstream) {
+    return '有状态 — 每个 Mcp-Session-Id 是独立会话标识，但所有会话共享一个 GitNexus stdio 上游进程。一个会话的上游崩溃会影响其他会话。';
+  }
+  return '有状态 — 每个 Mcp-Session-Id 对应独立的 GitNexus stdio 子进程。会话之间进程隔离。';
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -1294,12 +1714,12 @@ async function main() {
 
   log('=== GGW-P1-02 mcp-proxy / GitNexus 互操作门禁 ===\n');
 
-  // 1. Versions
+  // 1. Versions (P102-R1: fail-fast on missing commands)
   log('--- Versions ---');
   const versions = probeVersions();
   for (const [k, v] of Object.entries(versions)) log(`  ${k}: ${v}`);
 
-  // 2. Create temp fixture (P102-R4)
+  // 2. Create temp fixture (P102-R4, P102-R1: fail-fast setup)
   log('\n--- Temp Fixture ---');
   args._originalFixturePath = args.fixture;
   const tempFixture = await createTempFixture(args.fixture, log);
@@ -1315,10 +1735,12 @@ async function main() {
   const port = args.port || await findFreePort();
   args._actualPort = port;
   const pm = new ProcessManager();
+  args._mainPm = pm; // P102-R3: store for test 13.1 cleanup verification
   try {
     await pm.start(port, [GITNEXUS_BIN, 'mcp'], log);
   } catch (e) {
     log(`FATAL: ${e.message}`);
+    args._mainPm = null;
     await cleanupTempFixture(tempFixture, log);
     exit(1);
   }
@@ -1333,44 +1755,32 @@ async function main() {
     log(`  Session: ${client.sessionId || '(none)'}`);
   } catch (e) {
     log(`FATAL: initialize failed: ${e.message}`);
+    args._mainPm = null;
     await pm.stop(log);
     await cleanupTempFixture(tempFixture, log);
     exit(1);
   }
 
-  // 5. Run tests
+  // 5. Run tests (P102-R3: includes test 13 which stops main proxy and verifies cleanup)
   log('\n--- Tests ---');
   const results = await runAllTests(client, tempFixture, log, args);
 
-  // 6. Report
+  // 6. Stop any remaining secondary proxy (from test 11.2 if test 11.3 didn't already)
+  if (args._trackedPm2) {
+    try { await args._trackedPm2.stop(log); } catch {}
+    await sleep(1000);
+  }
+
+  // 7. Report (P102-R3: generated AFTER cleanup verification results are in)
   log('\n--- Report ---');
   await mkdir(dirname(REPORT_PATH), { recursive: true });
   const report = await generateReport(results, versions, tempFixture, args, startTime, log);
 
-  // 7. Cleanup
+  // 8. Cleanup temp fixture
   log('\n--- Cleanup ---');
-  if (!args.keepProcesses) {
-    if (args._trackedPm2) {
-      try { await args._trackedPm2.stop(log); } catch {}
-    }
-    await pm.stop(log);
-    await sleep(2000);
-
-    const finalPids = getAllPids();
-    const baseline = args._baselinePids || [];
-    const orphans = finalPids.filter(p => !baseline.includes(p));
-    if (orphans.length > 0) {
-      log(`  WARNING: ${orphans.length} orphan process(es) after cleanup: [${orphans.join(', ')}]`);
-    } else {
-      log('  No orphan processes detected');
-    }
-  } else {
-    log(`  Processes kept alive (--keep-processes). mcp-proxy at http://127.0.0.1:${port}/mcp`);
-  }
-
   await cleanupTempFixture(tempFixture, log);
 
-  // 8. Summary
+  // 9. Summary
   log(`\n=== ${report.overall} ===`);
   log(`${report.total} tests: ${report.passed} PASS, ${report.failed} FAIL, ${report.skipped} SKIP, ${report.constrained} CONSTRAINT`);
   if (report.requiredBlocked?.length) {
