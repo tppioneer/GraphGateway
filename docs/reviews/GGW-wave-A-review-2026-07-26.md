@@ -97,9 +97,11 @@
   `:392-404` 仍会仅凭 `path:` 行包含 fixture basename 选择 repo。不同目录下存在
   同名仓库时可绑定到错误索引，随后 4.2-4.4 仍可能把另一仓库的结果记为 PASS。
 - Violated item: verdict 和每个结论必须可追溯到真实协议证据；失败时应返回非零。
+- Accepted decision (2026-07-27): 禁止通过 repository basename 猜测 identity。
 - Expected: 所有 fixture 初始化、Git 提交和 GitNexus analyze 命令必须
   fail-fast；精确确认临时 fixture 的 canonical identity 后才运行协议门禁。
-  query/context 必须始终绑定并断言该 identity，不允许无 repo/global fallback。
+  只接受规范化完整路径的唯一匹配；零匹配或多匹配都必须 FAIL。query/context
+  必须始终绑定并断言该 identity，不允许 basename、无 repo 或 global fallback。
 
 ### P102-R2 — High / High confidence
 
