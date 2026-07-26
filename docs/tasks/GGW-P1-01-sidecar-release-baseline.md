@@ -2,14 +2,14 @@
 
 ## 元数据
 
-- State: `IMPLEMENTING`
-- Implementation HEAD: `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
+- State: `CHANGES_REQUIRED`
+- Implementation HEAD: `9eeec40c7bf53c66f75f9e730c5f54286b3a9b5b`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
-- Open findings: `P101-R1`、`P101-R3`
-- Closed findings: `P101-R2`
+- Open findings: `P101-R4`
+- Closed findings: `P101-R1`、`P101-R2`、`P101-R3`
 - Remediation round: 3
-- Remediation budget: `USER_OVERRIDE_APPROVED`（2026-07-27）
-- Next action: GPT-5.6 仅处理剩余 `P101-R1`、`P101-R3`
+- Remediation budget: `EXHAUSTED_AFTER_USER_OVERRIDE`（2026-07-27）
+- Next action: 等待用户批准第 4 轮，仅处理 `P101-R4`
 - Default executor: Codex（GPT-5.6）
 - Depends on: 无
 - Parallel with: P1-02、P1-03
