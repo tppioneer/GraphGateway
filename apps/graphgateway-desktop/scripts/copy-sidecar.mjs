@@ -6,10 +6,17 @@
  * Usage: node scripts/copy-sidecar.mjs [--target <triple>] [--dry-run]
  *
  * The effective target triple is resolved in order of priority:
- *   1. --target CLI argument
- *   2. CARGO_BUILD_TARGET environment variable
- *   3. `rustc -vV` host target
- *   4. Node.js host arch fallback (lowest priority)
+ *   1. --target CLI argument (highest priority, explicit manual override)
+ *   2. TAURI_ENV_TARGET_TRIPLE environment variable (set by Tauri CLI during
+ *      `beforeBuildCommand` — reflects the actual build target)
+ *   3. CARGO_BUILD_TARGET environment variable
+ *   4. `rustc -vV` host target
+ *   5. Node.js host arch fallback (lowest priority)
+ *
+ * When the effective target differs from the host triple, the script reads
+ * ONLY from `target/<triple>/release/graphgateway.exe` and NEVER falls back
+ * to `target/release/graphgateway.exe`.  This prevents mislabeling a
+ * host-architecture binary as a cross-compiled target.
  *
  * Must be run from apps/graphgateway-desktop/.
  */
@@ -83,32 +90,41 @@ function nodeHostTriple() {
  *
  * Priority order:
  *   1. Explicit --target CLI argument
- *   2. CARGO_BUILD_TARGET environment variable
- *   3. `rustc -vV` host field
- *   4. Node.js process architecture (lowest priority)
+ *   2. TAURI_ENV_TARGET_TRIPLE environment variable (set by Tauri CLI)
+ *   3. CARGO_BUILD_TARGET environment variable
+ *   4. `rustc -vV` host field
+ *   5. Node.js process architecture (lowest priority)
  *
  * @param {string|null} cliTarget
- * @returns {string}
+ * @returns {{ targetTriple: string, hostTriple: string }}
  */
 function resolveTargetTriple(cliTarget) {
+  const hostTriple = rustcHostTriple() || nodeHostTriple();
+
+  let targetTriple;
+
   // 1. CLI --target argument (highest priority)
   if (cliTarget) {
-    return cliTarget;
+    targetTriple = cliTarget;
+  }
+  // 2. TAURI_ENV_TARGET_TRIPLE (set by Tauri CLI during beforeBuildCommand)
+  else if (process.env.TAURI_ENV_TARGET_TRIPLE) {
+    targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE;
+  }
+  // 3. CARGO_BUILD_TARGET environment variable
+  else if (process.env.CARGO_BUILD_TARGET) {
+    targetTriple = process.env.CARGO_BUILD_TARGET;
+  }
+  // 4. rustc -vV host
+  else if (rustcHostTriple()) {
+    targetTriple = rustcHostTriple();
+  }
+  // 5. Node.js host arch fallback
+  else {
+    targetTriple = nodeHostTriple();
   }
 
-  // 2. CARGO_BUILD_TARGET environment variable
-  if (process.env.CARGO_BUILD_TARGET) {
-    return process.env.CARGO_BUILD_TARGET;
-  }
-
-  // 3. rustc -vV host
-  const rustcTarget = rustcHostTriple();
-  if (rustcTarget) {
-    return rustcTarget;
-  }
-
-  // 4. Node.js host arch fallback
-  return nodeHostTriple();
+  return { targetTriple, hostTriple };
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +132,7 @@ function resolveTargetTriple(cliTarget) {
 // ---------------------------------------------------------------------------
 function main() {
   const cliArgs = parseArgs(process.argv);
-  const targetTriple = resolveTargetTriple(cliArgs.target);
+  const { targetTriple, hostTriple } = resolveTargetTriple(cliArgs.target);
 
   if (cliArgs.dryRun) {
     console.log(targetTriple);
@@ -124,25 +140,50 @@ function main() {
   }
 
   const sidecarName = `graphgateway-${targetTriple}.exe`;
+  const isCrossTarget = targetTriple !== hostTriple;
 
-  // Source: when a non-default target is used, Cargo places artifacts under
-  // target/<target-triple>/ rather than target/.  Detect which layout exists.
-  let src = join(workspaceRoot, "target", targetTriple, "release", "graphgateway.exe");
-  if (!existsSync(src)) {
-    // Fall back to host-default target directory.
-    src = join(workspaceRoot, "target", "release", "graphgateway.exe");
+  // Source: Cargo places artifacts under target/<target-triple>/release/
+  // when --target is used.  For a cross-compiled target we MUST NOT fall
+  // back to the host default directory — that would relabel a host binary.
+  const crossSrc = join(
+    workspaceRoot,
+    "target",
+    targetTriple,
+    "release",
+    "graphgateway.exe"
+  );
+  const hostSrc = join(workspaceRoot, "target", "release", "graphgateway.exe");
+
+  let src = crossSrc;
+  if (!existsSync(crossSrc)) {
+    if (!isCrossTarget && existsSync(hostSrc)) {
+      // Host build without explicit --target may place artifact in the
+      // default directory.  This is safe because the host binary matches
+      // the host target.
+      src = hostSrc;
+    }
   }
 
   if (!existsSync(src)) {
     console.error(`ERROR: Sidecar binary not found.`);
-    console.error(`  Tried: ${join(workspaceRoot, "target", targetTriple, "release", "graphgateway.exe")}`);
-    console.error(`  Tried: ${join(workspaceRoot, "target", "release", "graphgateway.exe")}`);
-    console.error(
-      "Build it first: cargo build -p graphgateway-server --release"
-    );
-    if (targetTriple !== "x86_64-pc-windows-msvc") {
+    console.error(`  Expected at: ${crossSrc}`);
+    if (isCrossTarget) {
       console.error(
-        `  For target ${targetTriple}, use: cargo build -p graphgateway-server --release --target ${targetTriple}`
+        `  Cross-compilation target (${targetTriple}) != host (${hostTriple}).`
+      );
+      console.error(
+        `  Refusing to fall back to host binary at ${hostSrc} — that would mislabel a ${hostTriple} binary as ${targetTriple}.`
+      );
+      console.error(
+        `  Build the cross-compiled sidecar first:`
+      );
+      console.error(
+        `    cargo build -p graphgateway-server --release --target ${targetTriple}`
+      );
+    } else {
+      console.error(`  Also tried: ${hostSrc}`);
+      console.error(
+        "Build it first: cargo build -p graphgateway-server --release"
       );
     }
     process.exit(1);

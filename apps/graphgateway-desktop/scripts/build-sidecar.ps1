@@ -10,9 +10,10 @@
 
     The effective target triple is resolved in order of priority:
       1. -Target CLI parameter
-      2. $env:CARGO_BUILD_TARGET
-      3. rustc -vV host field
-      4. $env:PROCESSOR_ARCHITECTURE fallback (lowest priority)
+      2. $env:TAURI_ENV_TARGET_TRIPLE (set by Tauri CLI during beforeBuildCommand)
+      3. $env:CARGO_BUILD_TARGET
+      4. rustc -vV host field
+      5. $env:PROCESSOR_ARCHITECTURE fallback (lowest priority)
 .PARAMETER Target
     Explicit Rust target triple (e.g. "aarch64-pc-windows-msvc").
 #>
@@ -60,39 +61,52 @@ function Get-NodeHostTriple {
     return "x86_64-pc-windows-msvc"
 }
 
-# Priority order: CLI param > env var > rustc host > node arch
+# Determine the host triple (used for fallback gating).
+$hostTriple = $rustcTriple = Get-RustcHostTriple
+if (-not $hostTriple) {
+    $hostTriple = Get-NodeHostTriple
+}
+
+# Priority order: CLI param > TAURI_ENV_TARGET_TRIPLE > CARGO_BUILD_TARGET > rustc host > node arch
 $targetTriple = if ($Target) {
     $Target
+} elseif ($env:TAURI_ENV_TARGET_TRIPLE) {
+    $env:TAURI_ENV_TARGET_TRIPLE
 } elseif ($env:CARGO_BUILD_TARGET) {
     $env:CARGO_BUILD_TARGET
 } else {
-    $rustcTriple = Get-RustcHostTriple
-    if ($rustcTriple) {
-        $rustcTriple
+    $triple = Get-RustcHostTriple
+    if ($triple) {
+        $triple
     } else {
         Get-NodeHostTriple
     }
 }
 
 $sidecarName = "graphgateway-${targetTriple}.exe"
+$isCrossTarget = $targetTriple -ne $hostTriple
 
 Write-Host "Target triple: $targetTriple"
+Write-Host "Host triple:   $hostTriple"
+if ($isCrossTarget) {
+    Write-Host "Cross-compilation: YES (target != host)"
+}
 Write-Host "Sidecar binary name: $sidecarName"
 
 # ---------------------------------------------------------------------------
 # Build the sidecar in release mode
+#
+# Always pass --target to Cargo so that the artifact lands at the
+# target/<triple>/release/ path consistently.  This is safe for host builds
+# too — Cargo handles it correctly.
 # ---------------------------------------------------------------------------
 
-Write-Host "Building graphgateway-server (release)..."
+Write-Host "Building graphgateway-server (release) for target $targetTriple..."
 Push-Location $workspaceRoot
 try {
-    if ($Target) {
-        cargo build -p graphgateway-server --release --target $targetTriple
-    } else {
-        cargo build -p graphgateway-server --release
-    }
+    cargo build -p graphgateway-server --release --target $targetTriple
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build -p graphgateway-server --release failed with exit code $LASTEXITCODE"
+        throw "cargo build -p graphgateway-server --release --target $targetTriple failed with exit code $LASTEXITCODE"
     }
 } finally {
     Pop-Location
@@ -100,18 +114,44 @@ try {
 
 # ---------------------------------------------------------------------------
 # Copy the binary
+#
+# The artifact is always at target/<targetTriple>/release/graphgateway.exe
+# because we always pass --target to Cargo.
+#
+# P101-R3: For a cross-compiled target, we NEVER fall back to the host
+# default directory (target/release/).  That would mislabel a host-arch
+# binary as a different target.
 # ---------------------------------------------------------------------------
 
-# When a non-default target is used, Cargo places artifacts under
-# target/<target-triple>/ rather than target/.
-$src = "$workspaceRoot\target\$targetTriple\release\graphgateway.exe"
-if (-not (Test-Path $src)) {
-    # Fall back to host-default target directory.
-    $src = "$workspaceRoot\target\release\graphgateway.exe"
+$crossSrc = "$workspaceRoot\target\$targetTriple\release\graphgateway.exe"
+$hostSrc = "$workspaceRoot\target\release\graphgateway.exe"
+
+$src = $crossSrc
+if (-not (Test-Path $crossSrc)) {
+    if (-not $isCrossTarget) {
+        # Host build: it's safe to check the default target directory because
+        # the host binary matches the host target.
+        if (Test-Path $hostSrc) {
+            Write-Host "Using host default target directory (host == target)."
+            $src = $hostSrc
+        }
+    }
 }
 
 if (-not (Test-Path $src)) {
-    throw "Sidecar binary not found.  Tried:`n  $workspaceRoot\target\$targetTriple\release\graphgateway.exe`n  $workspaceRoot\target\release\graphgateway.exe"
+    Write-Host "ERROR: Sidecar binary not found."
+    Write-Host "  Expected at: $crossSrc"
+    if ($isCrossTarget) {
+        Write-Host "  Cross-compilation target ($targetTriple) != host ($hostTriple)."
+        Write-Host "  Refusing to fall back to host binary at $hostSrc —"
+        Write-Host "  that would mislabel a $hostTriple binary as $targetTriple."
+        Write-Host "  Build the cross-compiled sidecar first:"
+        Write-Host "    cargo build -p graphgateway-server --release --target $targetTriple"
+    } else {
+        Write-Host "  Also tried: $hostSrc"
+        Write-Host "  Build first: cargo build -p graphgateway-server --release"
+    }
+    throw "Sidecar binary not found"
 }
 
 $destDir = "$workspaceRoot\apps\graphgateway-desktop\src-tauri\binaries"
