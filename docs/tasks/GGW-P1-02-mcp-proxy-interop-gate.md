@@ -2,13 +2,15 @@
 
 ## 元数据
 
-- State: `CHANGES_REQUIRED`
+- State: `IMPLEMENTING`
 - Implementation HEAD: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
 - Tested code commit: `8c29d71aa496bdd92b551d176eb56c95507e64a5`
-- Remediation round: `2/2`
+- Remediation base: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Remediation round: `3/3`（用户于 2026-07-27 显式授权例外轮次）
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-02`
 - Open findings: `P102-R1`、`P102-R2`、`P102-R3`、`P102-R4`
-- Default executor: Claude Code
+- Executor: Claude Code
+- Model: `glm-5.2`
 - Depends on: 无
 - Parallel with: P1-01、P1-03
 - Expected HEAD: `87afdaeb7c5579facb93edf15f786011ebb3c4ca`
@@ -27,6 +29,25 @@
   结果必须在报告生成前进入 verdict；进程归属必须通过 parent/child 关系证明。
   不要求测试脚本直接观测 GitNexus 原始 stdout/stderr。
 - `P102-R4`: 直接删除根 `.gitignore` 的范围外空行，使最终累计差异与原始基线一致。
+
+## 第三轮整改契约
+
+- Base: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Resolve only: `P102-R1`、`P102-R2`、`P102-R3`、`P102-R4`
+- `P102-R1`: 删除 basename identity fallback；完整路径规范化后必须唯一匹配，
+  零匹配或多匹配均 FAIL。
+- `P102-R2`: 不传播客户端 abort 也可接受；必须等待并记录可控上游请求最终是
+  继续完成、被取消还是状态未知，并记录原 Session、sibling Session、upstream PID
+  和相关进程行为。`siblingAlive=false` 不得返回 PASS。
+- `P102-R3`: MCP 功能检查失败必须 FAIL；所有 cleanup 结果必须在报告生成前进入
+  verdict；进程归属必须仅通过 parent/child 关系证明。无需直接观测 GitNexus
+  原始 stdout/stderr。
+- `P102-R4`: 唯一允许的原任务范围外修改是删除根 `.gitignore` 中该任务引入的
+  空行；最终 `.gitignore` 必须与原始基线
+  `87afdaeb7c5579facb93edf15f786011ebb3c4ca` 完全一致。
+- 禁止修改本任务卡、审查文档、设计文档、生产 Rust/Tauri 代码或其他无关文件。
+- 完整门禁必须从 clean worktree 运行；报告提交必须位于被测代码提交之后，
+  `Tested commit` 必须精确指向被测代码提交且不得包含本机绝对路径。
 
 ## Objective
 

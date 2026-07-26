@@ -85,6 +85,9 @@
 - Tested code commit: `8c29d71aa496bdd92b551d176eb56c95507e64a5`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-02`
 - Verdict: `CHANGES_REQUIRED`
+- Remediation round 3: AUTHORIZED on 2026-07-27；executor Claude Code，
+  model `glm-5.2`，base
+  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
 
 ### P102-R1 — High / High confidence
 
@@ -251,5 +254,5 @@
 GGW-P1-03 已集成到 `mcp`；GGW-P1-01 与 GGW-P1-02 仍为
 `CHANGES_REQUIRED`，不得集成。GGW-P1-01 已用尽两轮整改预算，不得自动发起
 第三轮；剩余 P101-R1/P101-R3 必须重新拆卡或由用户批准并记录显式例外。
-GGW-P1-02 也已用尽两轮整改预算；剩余 P102-R1/P102-R2/P102-R3/P102-R4
-不得自动发起第三轮，必须重新拆卡或由用户批准并记录显式例外。
+GGW-P1-02 原两轮整改预算已用尽；用户于 2026-07-27 显式批准第三轮例外，
+仅允许处理 P102-R1/P102-R2/P102-R3/P102-R4，完成后必须重新独立复审。
