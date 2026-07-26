@@ -295,7 +295,7 @@ class ProcessManager {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false,
         windowsHide: true,
-        shell: false,
+        shell: platform === 'win32',
       });
       this.proxy = child;
       this.proxyPid = child.pid;
