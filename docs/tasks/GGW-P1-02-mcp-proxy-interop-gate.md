@@ -16,6 +16,14 @@
 - Suggested worktree: `F:\develop\worktrees\GraphGateway-p1-02`
 - Budget: 一次实现，最多两轮整改
 
+## 已接受的复审决策
+
+- `P102-R2`: 客户端断开后不要求向 GitNexus 上游传播中断；必须测量并记录上游
+  请求继续完成、被取消或状态未知，以及原 Session、sibling Session、upstream PID
+  和相关进程的实际行为。
+- `P102-R4`: 直接删除根 `.gitignore` 的范围外空行，使最终累计差异与原始基线一致。
+- `P102-R1`、`P102-R3`: 继续讨论，尚未授权第三轮实现。
+
 ## Objective
 
 用可重复的黑盒验证证明 mcp-proxy 能否把 GitNexus stdio MCP 透明暴露为

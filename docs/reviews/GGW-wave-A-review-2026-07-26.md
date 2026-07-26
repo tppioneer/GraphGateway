@@ -110,12 +110,15 @@
 - Evidence: disconnect 已进入必需门禁并记录共享上游约束；但 abort 测试仍只证明
   本地 `fetch` 收到 `AbortError`。它没有观察 20 秒 delay 是否在上游被终止，
   upstream PID 改变时只写 NOTE，且 `siblingAlive=false` 仍执行
-  `return PASS(...)`。因此当前 PASS 不能证明上游请求终止、相关资源回收或 sibling
-  Session 一定可用。
+  `return PASS(...)`。因此当前 PASS 没有如实测量和区分上游请求继续执行、
+  Session/sibling 可用性以及相关资源行为。
 - Violated item: 必须验证并记录上游异常、超时和客户端断开。
-- Expected: abort/disconnect 后保持 proxy 运行，分别观察并断言上游请求终止、
-  被断开 Session 的后续行为、相关子进程回收，以及 sibling Session 的可用性；
-  将 fixture 的 disconnect 场景纳入必需门禁。
+- Accepted decision (2026-07-27): 客户端断开后不要求 mcp-proxy 向 GitNexus
+  冒泡传递中断信号；允许上游请求继续执行，但必须如实测量并记录。
+- Expected: abort 后保持 proxy 运行并等待可控 delay 的最终结果，明确记录上游请求
+  是继续完成、被取消还是状态未知；同时记录 upstream PID、原 Session、sibling
+  Session 和相关进程的实际行为。不得因 `siblingAlive=false` 仍返回 PASS；不把
+  “上游请求继续执行”本身判为失败。disconnect 场景继续作为共享上游约束记录。
 
 ### P102-R3 — High / High confidence
 
@@ -146,6 +149,8 @@
   `87afdaeb7c5579facb93edf15f786011ebb3c4ca` 到最终 HEAD 的累计差异仍在根
   `.gitignore` 新增一个空行。即使不改变 ignore 语义，这仍是 Allowed scope
   之外的净修改，R4 的关闭条件未满足。
+- Accepted decision (2026-07-27): 直接删除该范围外空行；最终累计差异中根
+  `.gitignore` 必须与原始基线完全一致。
 
 ### P102-R5 — Medium / High confidence
 
