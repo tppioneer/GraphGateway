@@ -80,13 +80,17 @@
 
 ## GGW-P1-02
 
-- Head: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
-- Tested code commit: `8c29d71aa496bdd92b551d176eb56c95507e64a5`
+- Head: `1d180f442115e2d47361e905785531bf2c92f141`
+- Tested code commit: `414632dacc819d4c9c36fc863a3c608cec8fffd5`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-02`
-- Verdict: `CHANGES_REQUIRED`
+- Review status: `READY_FOR_REVIEW`
+- Last verdict: `CHANGES_REQUIRED`（round 2）
 - Remediation round 3: AUTHORIZED on 2026-07-27；executor Claude Code，
   model `glm-5.2`，base
   `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Remediation round 3 delivery: code
+  `414632dacc819d4c9c36fc863a3c608cec8fffd5`，clean-gate report
+  `1d180f442115e2d47361e905785531bf2c92f141`；等待独立复审
 
 ### P102-R1 — High / High confidence
 
