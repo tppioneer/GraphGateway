@@ -152,6 +152,8 @@
 - Head: `d0d9b70f4378a918c78157a7d7c0bc9fb9e05bae`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-03`
 - Verdict: `PASS`
+- Integration: merged into `mcp` at
+  `1dc08c3e811cbac141bbb06ae7df5e6eb8bbdc69`
 
 ### P103-R1 — High / High confidence
 
@@ -202,6 +204,7 @@
 - `cargo test -p graphgateway-types -p graphgateway-core --all-features`: PASS，
   51 core + 75 types + 1 组 trybuild（5 cases）
 - 独立复审未发现新增 finding；P103-R1、P103-R2、P103-R3、P103-R4 全部关闭
+- 合入 `mcp` 后重新执行以上三项检查：PASS，任务状态更新为 `INTEGRATED`
 
 ## Wave A summary
 
@@ -211,6 +214,6 @@
 | GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4、P102-R5 |
 | GGW-P1-03 | `PASS` | 无 |
 
-GGW-P1-03 已达到 `VERIFIED`，但尚未集成到 `mcp`；GGW-P1-01 与 GGW-P1-02
-仍为 `CHANGES_REQUIRED`，不得集成。后续整改必须基于各自当前完整
+GGW-P1-03 已集成到 `mcp`；GGW-P1-01 与 GGW-P1-02 仍为
+`CHANGES_REQUIRED`，不得集成。后续整改必须基于各自当前完整
 Implementation HEAD，保留未关闭的 finding ID，并限制为原任务范围内的一轮修复。

@@ -2,8 +2,9 @@
 
 ## 元数据
 
-- State: `VERIFIED`
+- State: `INTEGRATED`
 - Implementation HEAD: `d0d9b70f4378a918c78157a7d7c0bc9fb9e05bae`
+- Integration commit: `1dc08c3e811cbac141bbb06ae7df5e6eb8bbdc69`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-03`
 - Open findings: 无
 - Closed findings: `P103-R1`、`P103-R2`、`P103-R3`、`P103-R4`
