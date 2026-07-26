@@ -2,12 +2,14 @@
 
 ## 元数据
 
-- State: `READY_FOR_REVIEW`
+- State: `CHANGES_REQUIRED`
 - Implementation HEAD: `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
 - Open findings: `P101-R1`、`P101-R3`
 - Closed findings: `P101-R2`
 - Remediation round: 2
+- Remediation budget: `EXHAUSTED`
+- Next action: 重新拆分剩余 finding 或记录显式例外；不得自动发起第三轮整改
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-02、P1-03

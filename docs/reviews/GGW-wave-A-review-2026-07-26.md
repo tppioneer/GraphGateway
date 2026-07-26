@@ -8,27 +8,28 @@
 
 ## GGW-P1-01
 
-- Head: `8115f12247ea03f509d505e878369126776123e1`
+- Head: `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-01`
 - Verdict: `CHANGES_REQUIRED`
 
 ### P101-R1 — High / High confidence
 
 - Status: OPEN after remediation
-  `8115f12247ea03f509d505e878369126776123e1`
+  `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Location:
-  `apps/graphgateway-desktop/src-tauri/tests/packaged_smoke_test.rs:378-421`
-- Evidence: 新测试确实启动了 Tauri desktop 和 Sidecar，但它通过
-  `taskkill /f /t /pid <desktop>` 终止宿主；`/t` 本身会终止该 PID 的整个子进程
-  树，因此即使 Job Object 的 `KILL_ON_JOB_CLOSE` 完全失效，Sidecar 也会被
-  `taskkill` 回收。若 Sidecar 15 秒后仍存在，测试还会主动调用
-  `kill_process_tree(sidecar_pid)`，再以清理后的 PID 集合执行最终断言，未断言
-  `reclaimed == true`，会把真实的回收失败变成 PASS。
-- Violated item: “打包产物能启动 Sidecar”以及“宿主退出后的进程回收”验收标准。
-- Expected: 仅终止 desktop 宿主进程，不使用会递归杀子进程的 `/t`；在任何测试
-  清理动作之前断言 Sidecar 已由 Job Object 回收。测试失败后的强制清理只能放在
-  guard/finally 中，不能参与成功判定；缺失或损坏 Sidecar 的场景也不得以
-  spawn 失败或缺少构建产物为成功跳过。
+  `apps/graphgateway-desktop/src-tauri/tests/packaged_smoke_test.rs:611-735`
+- Partial closure: happy-path smoke 已改为只终止 desktop PID，不使用 `/t`；
+  强制清理只在失败 guard 中运行。独立运行证明 Sidecar 在宿主退出后 0.1 秒内
+  由 Job Object 回收，因此“宿主退出后的进程回收”子项已修复。
+- Remaining evidence: missing-sidecar smoke 捕获到的 stderr 为 0 字节，
+  `has_sidecar_msg`、`has_resolve_msg`、`has_failed_msg` 全为 false，但代码只打印
+  NOTE，不断言任何诊断通道，随后仍输出“diagnosable error”并 PASS。测试也没有
+  构造或执行损坏 Sidecar，只覆盖文件缺失。
+- Violated item: “缺失/损坏 Sidecar 时给出可诊断错误，且不会遗留进程”验收
+  标准；进程未启动本身不是可供用户定位原因的诊断信息。
+- Expected: 增加损坏二进制场景，并通过确定性可观察通道断言错误，例如 Failed
+  状态及 `last_error`、受控诊断日志或测试专用状态查询；诊断为空时测试必须失败，
+  不得把“没有 Sidecar 进程”替代为错误证据。
 
 ### P101-R2 — Medium / High confidence
 
@@ -42,36 +43,41 @@
 ### P101-R3 — Medium / High confidence
 
 - Status: OPEN after remediation
-  `8115f12247ea03f509d505e878369126776123e1`
+  `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Location: `apps/graphgateway-desktop/src-tauri/tauri.conf.json:9`,
-  `apps/graphgateway-desktop/scripts/copy-sidecar.mjs:72-129`,
-  `apps/graphgateway-desktop/scripts/build-sidecar.ps1:91-116`
-- Evidence: Tauri 为 `beforeBuildCommand` 提供实际目标
-  `TAURI_ENV_TARGET_TRIPLE`，但脚本只读取自定义 `--target`、
-  `CARGO_BUILD_TARGET` 和 host rustc/Node 架构；配置中的 before-build Cargo
-  命令也未把 Tauri `--target` 转交给 Sidecar 构建。独立复现设置
-  `TAURI_ENV_TARGET_TRIPLE=aarch64-pc-windows-msvc`、清除
-  `CARGO_BUILD_TARGET` 后执行 `node .../copy-sidecar.mjs --dry-run`，仍输出
-  `x86_64-pc-windows-msvc`。此外两个复制脚本在目标目录不存在时均回退
-  `target/release/graphgateway.exe`，可能把 host 二进制复制并命名为非 host
-  target。
+  `apps/graphgateway-desktop/package.json:8`,
+  `apps/graphgateway-desktop/scripts/copy-sidecar.mjs:101-189`
+- Partial closure: copy 脚本已读取 `TAURI_ENV_TARGET_TRIPLE`，并在非 host target
+  artifact 不存在时拒绝回退和重命名 host binary；12 项脚本断言在当前环境通过。
+- Remaining evidence: 实际 Tauri `beforeBuildCommand` 与 `npm run
+  build:sidecar` 仍先执行不带 `--target` 的
+  `cargo build -p graphgateway-server --release`，未调用已修复的
+  `build-sidecar.ps1`，因此只生成 host `target/release/graphgateway.exe`。
+  独立设置 `TAURI_ENV_TARGET_TRIPLE=aarch64-pc-windows-msvc` 后执行
+  `npm run build:sidecar`，Cargo 仍成功完成 host release build，随后 copy 因
+  `target/aarch64-pc-windows-msvc/release/graphgateway.exe` 不存在而退出 1。
+  当前修改把错误打包变成了正确失败，但没有实现跨 target 自动构建。
 - Violated item: clean build 必须准备“正确 target-triple 名称”的 Sidecar。
-- Expected: before-build 流程以 `TAURI_ENV_TARGET_TRIPLE` 为目标来源，并将同一
-  triple 显式传给 Cargo 构建和复制脚本；请求非默认 target 时不得回退或重命名
-  host artifact。新增测试必须覆盖 Tauri hook 环境变量以及目标 artifact 缺失时
-  fail closed，而不只验证 `--dry-run` 输出。
+- Expected: 让 `beforeBuildCommand` 和 `npm run build:sidecar` 调用同一个构建
+  入口，由其解析有效 triple、执行
+  `cargo build ... --target <triple>`，再复制同一 target 目录的 artifact。
+  测试必须验证 Cargo 收到 `--target`，且在干净目录中不依赖预存 host/cross
+  artifact；当前 fail-closed 测试的 soft skip 也应改为确定性 fixture。
 
 ### Verification evidence
 
-- 独立 `cargo fmt --all -- --check`: PASS
-- 独立 `cargo test -p graphgateway-desktop --all-features -- --test-threads=1`:
-  PASS，7 unit + 3 packaged smoke；但 P101-R1 所述测试逻辑不能证明 Job Object
-  回收
-- 独立 `node apps/graphgateway-desktop/scripts/test-copy-sidecar.mjs`: PASS，
-  6/6；但未覆盖 Tauri hook 的实际 target 环境
-- 独立 Tauri target 环境复现：FAIL，期望 aarch64，实际输出 x86_64
-- 执行器报告 workspace tests、npm build 和 `cargo tauri build --no-bundle`
-  均 PASS；这些 host-target 结果不能关闭 P101-R1/P101-R3
+- `cargo fmt --all -- --check`: PASS
+- `cargo test --workspace --all-features`: PASS，全部 workspace suites 与
+  doctests 通过；desktop linker 输出 1 条非失败 warning
+- `npm ci`、`npm run build`: PASS
+- 本机未安装 `cargo-tauri`；等价执行 `npx tauri build --no-bundle`: PASS，
+  仅覆盖 host `x86_64-pc-windows-msvc`
+- 独立 packaged smoke: 3/3 PASS；Job Object 回收有效，但 missing-sidecar
+  证据同时显示 stderr 为空且所有诊断标志为 false
+- `node scripts/test-copy-sidecar.mjs`: 12/12 PASS；只验证解析/copy，
+  未验证构建入口向 Cargo 传递 target
+- `TAURI_ENV_TARGET_TRIPLE=aarch64-pc-windows-msvc npm run build:sidecar`:
+  FAIL（exit 1）；Cargo 构建 host artifact 后找不到 target-specific artifact
 
 ## GGW-P1-02
 
@@ -234,5 +240,6 @@
 | GGW-P1-03 | `PASS` | 无 |
 
 GGW-P1-03 已集成到 `mcp`；GGW-P1-01 与 GGW-P1-02 仍为
-`CHANGES_REQUIRED`，不得集成。后续整改必须基于各自当前完整
-Implementation HEAD，保留未关闭的 finding ID，并限制为原任务范围内的一轮修复。
+`CHANGES_REQUIRED`，不得集成。GGW-P1-01 已用尽两轮整改预算，不得自动发起
+第三轮；剩余 P101-R1/P101-R3 必须重新拆卡或由用户批准并记录显式例外。
+GGW-P1-02 后续整改仍须基于当前完整 Implementation HEAD，保留未关闭 finding ID。
