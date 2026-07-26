@@ -2,8 +2,9 @@
 
 ## 元数据
 
-- State: `CHANGES_REQUIRED`
+- State: `IMPLEMENTING`
 - Implementation HEAD: `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- Remediation round: `2/2`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-02`
 - Open findings: `P102-R1`、`P102-R2`、`P102-R3`
 - Default executor: Claude Code
