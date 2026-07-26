@@ -2,11 +2,11 @@
 
 ## 元数据
 
-- State: `DRAFT`
+- State: `READY`
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-02、P1-03
-- Expected HEAD: `TO_BE_SET_AFTER_TASK_CARD_COMMIT`
+- Expected HEAD: `87afdaeb7c5579facb93edf15f786011ebb3c4ca`
 - Suggested branch: `codex/ggw-p1-01-sidecar-release`
 - Suggested worktree: `F:\develop\worktrees\GraphGateway-p1-01`
 - Budget: 一次实现，最多两轮整改
