@@ -23,8 +23,10 @@
 - `P102-R2`: 客户端断开后不要求向 GitNexus 上游传播中断；必须测量并记录上游
   请求继续完成、被取消或状态未知，以及原 Session、sibling Session、upstream PID
   和相关进程的实际行为。
+- `P102-R3`: 黑盒验证只保留三项硬要求：MCP 功能检查失败必须 FAIL；所有 cleanup
+  结果必须在报告生成前进入 verdict；进程归属必须通过 parent/child 关系证明。
+  不要求测试脚本直接观测 GitNexus 原始 stdout/stderr。
 - `P102-R4`: 直接删除根 `.gitignore` 的范围外空行，使最终累计差异与原始基线一致。
-- `P102-R3`: 继续讨论，尚未授权第三轮实现。
 
 ## Objective
 

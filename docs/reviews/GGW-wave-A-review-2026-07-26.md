@@ -127,18 +127,19 @@
 - Status: OPEN after remediation round 2
   `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
 - Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:1283-1299`,
-  `:1349-1395`, `:1652-1656`, `:1774-1782`
+  `:1774-1782`
 - Evidence: 全系统 PID 差值回退已删除，本轮独立运行可确定性追踪并回收两个
   descendant，报告的共享上游模型也已统一；但 11.2 的代理功能检查失败只写日志，
-  仍会把任意存活 descendant 判为“服务 MCP 流量”。11.4 只排除 proxy stderr
-  中出现 JSON-RPC/部分 payload，并未观测 GitNexus MCP stdout 是否只含协议帧，
-  却在报告中断言 upstream stdout 与日志已隔离。此外报告仍在临时 fixture cleanup
-  之前写入，cleanup 异常只记录 warning，不进入结果或 verdict。
+  仍会把任意存活 descendant 判为“服务 MCP 流量”。此外报告仍在临时 fixture
+  cleanup 之前写入，cleanup 异常只记录 warning，不进入结果或 verdict。
 - Violated item: 明确会话/进程映射、proxy 退出后的子进程行为，且结论来自证据。
-- Expected: 使用可靠的 parent/child 或 Job Object 关联证明每个被测 PID 的归属；
-  无法建立关联时 FAIL，不得使用全系统 PID 差值替代。把所有 cleanup 结果纳入
-  report/verdict 后再写报告，并由测量结果生成唯一一致的会话/进程模型结论；
-  对 stdout 协议帧和 stderr 日志内容分别做断言。
+- Accepted decision (2026-07-27): 黑盒验证边界只保留三项硬要求；不要求测试脚本
+  直接观测 GitNexus 原始 stdout/stderr。
+- Expected:
+  1. MCP 功能检查失败必须 FAIL。
+  2. 所有 cleanup 结果必须在生成报告之前进入 verdict。
+  3. 进程归属必须通过 parent/child 关系证明；无法建立关联时 FAIL，不得使用
+     全系统 PID 差值替代。
 
 ### P102-R4 — Medium / High confidence
 
