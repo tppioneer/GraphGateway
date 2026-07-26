@@ -1,10 +1,10 @@
 # mcp-proxy ↔ GitNexus MCP 互操作兼容性报告
 
-> **生成时间**: 2026-07-26 18:34:14.812 UTC
+> **生成时间**: 2026-07-26 18:46:08.980 UTC
 > **任务**: GGW-P1-02 mcp-proxy / GitNexus 互操作门禁
 > **结论**: **PASS_WITH_CONSTRAINTS**
 > **Tested commit**: 414632dacc819d4c9c36fc863a3c608cec8fffd5
-> **总耗时**: 182620 ms
+> **总耗时**: 184152 ms
 
 ---
 
@@ -21,7 +21,7 @@
 
 ```sh
 mcp-proxy \
-  --port 24955 --host 127.0.0.1 \
+  --port 41035 --host 127.0.0.1 \
   --server stream \
   --connectionTimeout 30000 --requestTimeout 120000 \
   --shell -- gitnexus mcp
@@ -41,52 +41,52 @@ mcp-proxy \
 | 1 | 1. Initialize & Session | 1.1 initialize returns protocol version and server info | **PASS** | 0 |
 | 2 | 1. Initialize & Session | 1.2 Mcp-Session-Id is assigned and required | **PASS** | 1 |
 | 3 | 1. Initialize & Session | 1.3 session ID is stable across requests | **PASS** | 7 |
-| 4 | 2. tools/list | 2.1 tools/list returns non-empty tool array | **PASS** | 4 |
+| 4 | 2. tools/list | 2.1 tools/list returns non-empty tool array | **PASS** | 3 |
 | 5 | 2. tools/list | 2.2 each tool has name + description + inputSchema | **PASS** | 4 |
 | 6 | 3. resources/list & resources/read | 3.1 resources/list returns resource array | **PASS** | 3 |
-| 7 | 3. resources/list & resources/read | 3.2 resources/read returns content for known resource | **PASS** | 64 |
+| 7 | 3. resources/list & resources/read | 3.2 resources/read returns content for known resource | **PASS** | 65 |
 | 8 | 4. tools/call — fixed repo | 4.1 list_repos returns repo list | **PASS** | 60 |
-| 9 | 4. tools/call — fixed repo | 4.2 list_repos contains fixture repo | **PASS** | 57 |
+| 9 | 4. tools/call — fixed repo | 4.2 list_repos contains fixture repo | **PASS** | 63 |
 | 10 | 4. tools/call — fixed repo | 4.3 query returns results — bound to fixture repo | **PASS** | 5 |
-| 11 | 4. tools/call — fixed repo | 4.4 context resolves a symbol — bound to fixture repo | **PASS** | 3 |
+| 11 | 4. tools/call — fixed repo | 4.4 context resolves a symbol — bound to fixture repo | **PASS** | 4 |
 | 12 | 4. tools/call — fixed repo | 4.5 checkpoint: read-only tool calls work | **PASS** | 3 |
 | 13 | 5. Two concurrent client sessions | 5.1 two independent sessions get different IDs | **PASS** | 3 |
-| 14 | 5. Two concurrent client sessions | 5.2 both sessions return same tool set | **PASS** | 7 |
+| 14 | 5. Two concurrent client sessions | 5.2 both sessions return same tool set | **PASS** | 6 |
 | 15 | 5. Two concurrent client sessions | 5.3 original session still functional after new session | **PASS** | 4 |
-| 16 | 6. Concurrent requests | 6.1 three concurrent tools/list complete | **PASS** | 6 |
-| 17 | 6. Concurrent requests | 6.2 concurrent list_repos + tools/list do not interfere | **PASS** | 64 |
-| 18 | 7. Error handling — malformed requests | 7.1 invalid JSON returns error | **PASS** | 2 |
-| 19 | 7. Error handling — malformed requests | 7.2 missing jsonrpc field is rejected | **PASS** | 1 |
+| 16 | 6. Concurrent requests | 6.1 three concurrent tools/list complete | **PASS** | 7 |
+| 17 | 6. Concurrent requests | 6.2 concurrent list_repos + tools/list do not interfere | **PASS** | 59 |
+| 18 | 7. Error handling — malformed requests | 7.1 invalid JSON returns error | **PASS** | 3 |
+| 19 | 7. Error handling — malformed requests | 7.2 missing jsonrpc field is rejected | **PASS** | 2 |
 | 20 | 7. Error handling — malformed requests | 7.3 unknown tool returns error | **CONSTRAINT** | 3 |
-| 21 | 8. Timeout, cancellation & disconnect | 8.1 delay tool: configurable slow request eventually completes | **PASS** | 13786 |
-| 22 | 8. Timeout, cancellation & disconnect | 8.2 client abort: observe upstream final state and session behavior | **CONSTRAINT** | 17575 |
-| 23 | 8. Timeout, cancellation & disconnect | 8.3 other session responsive during slow request (isolation) | **PASS** | 14754 |
-| 24 | 8. Timeout, cancellation & disconnect | 8.4 upstream disconnect: session invalidated, proxy stays alive | **CONSTRAINT** | 11523 |
-| 25 | 9. Upstream failure & isolation | 9.1 upstream crash detected — subsequent request returns error | **PASS** | 11737 |
-| 26 | 9. Upstream failure & isolation | 9.2 crashed session cannot make further requests | **CONSTRAINT** | 10725 |
-| 27 | 9. Upstream failure & isolation | 9.3 other session remains operational after sibling crash | **CONSTRAINT** | 11360 |
-| 28 | 10. Session lifecycle | 10.1 three rapid session creations do not destabilize proxy | **PASS** | 16 |
+| 21 | 8. Timeout, cancellation & disconnect | 8.1 delay tool: configurable slow request eventually completes | **PASS** | 13722 |
+| 22 | 8. Timeout, cancellation & disconnect | 8.2 client abort: observe upstream final state and session behavior | **CONSTRAINT** | 17488 |
+| 23 | 8. Timeout, cancellation & disconnect | 8.3 other session responsive during slow request (isolation) | **PASS** | 14758 |
+| 24 | 8. Timeout, cancellation & disconnect | 8.4 upstream disconnect: session invalidated, proxy stays alive | **CONSTRAINT** | 11557 |
+| 25 | 9. Upstream failure & isolation | 9.1 upstream crash detected — subsequent request returns error | **PASS** | 11688 |
+| 26 | 9. Upstream failure & isolation | 9.2 crashed session cannot make further requests | **CONSTRAINT** | 10738 |
+| 27 | 9. Upstream failure & isolation | 9.3 other session remains operational after sibling crash | **CONSTRAINT** | 11352 |
+| 28 | 10. Session lifecycle | 10.1 three rapid session creations do not destabilize proxy | **PASS** | 13 |
 | 29 | 10. Session lifecycle | 10.2 session header with garbage value is rejected | **PASS** | 1 |
-| 30 | 11. Proxy exit & child process cleanup | 11.1 verify process tracking primitives | **PASS** | 707 |
-| 31 | 11. Proxy exit & child process cleanup | 11.2 deterministic descendant tracking — no system-wide baseline | **PASS** | 22187 |
-| 32 | 11. Proxy exit & child process cleanup | 11.3 proxy stop terminates all tracked child processes | **PASS** | 13238 |
-| 33 | 11. Proxy exit & child process cleanup | 11.4 stdout and stderr content isolation | **PASS** | 12690 |
+| 30 | 11. Proxy exit & child process cleanup | 11.1 verify process tracking primitives | **PASS** | 616 |
+| 31 | 11. Proxy exit & child process cleanup | 11.2 deterministic descendant tracking — no system-wide baseline | **PASS** | 22241 |
+| 32 | 11. Proxy exit & child process cleanup | 11.3 proxy stop terminates all tracked child processes | **PASS** | 13148 |
+| 33 | 11. Proxy exit & child process cleanup | 11.4 stdout and stderr content isolation | **PASS** | 12659 |
 | 34 | 12. Generation / P1-08 pre-check | 12.1 audit for generation-related tools | **CONSTRAINT** | 5 |
 | 35 | 12. Generation / P1-08 pre-check | 12.2 audit for generation_id / branch parameters | **PASS** | 3 |
 | 36 | 12. Generation / P1-08 pre-check | 12.3 list all tool names for reference | **PASS** | 3 |
-| 37 | 13. Main proxy cleanup | 13.1 main proxy stop terminates all child processes | **PASS** | 28273 |
-| 38 | 13. Main proxy cleanup | 13.4 temporary fixture cleanup | **PASS** | 11 |
+| 37 | 13. Main proxy cleanup | 13.1 main proxy stop terminates all child processes | **PASS** | 28186 |
+| 38 | 13. Main proxy cleanup | 13.4 temporary fixture cleanup | **PASS** | 10 |
 
 ### 详细证据
 
 **1. 1.1 initialize returns protocol version and server info** [PASS]
-> session-id=217c2a88..., initialized=true
+> session-id=26006c8a..., initialized=true
 
 **2. 1.2 Mcp-Session-Id is assigned and required** [PASS]
 > session required (correct): Bad Request: No valid session ID provided
 
 **3. 1.3 session ID is stable across requests** [PASS]
-> session stable: 217c2a88...
+> session stable: 26006c8a...
 
 **4. 2.1 tools/list returns non-empty tool array** [PASS]
 > 17 tools
@@ -116,7 +116,7 @@ mcp-proxy \
 > check tool working: 322 chars
 
 **13. 5.1 two independent sessions get different IDs** [PASS]
-> session1=217c2a88... session2=9c1755cf...
+> session1=26006c8a... session2=1f3a9156...
 
 **14. 5.2 both sessions return same tool set** [PASS]
 > 17 tools in both sessions
@@ -140,13 +140,13 @@ mcp-proxy \
 > unknown tool returned no error — proxy passes through backend response
 
 **21. 8.1 delay tool: configurable slow request eventually completes** [PASS]
-> delayed response received after 3013ms (requested 3000ms)
+> delayed response received after 3010ms (requested 3000ms)
 
 **22. 8.2 client abort: observe upstream final state and session behavior** [CONSTRAINT]
-> upstream continued and completed the aborted request (abort not propagated to upstream). abort interrupted local request; upstream PID 98364=alive; upstream request state=completed; original session alive=true; sibling session alive=true
+> upstream continued and completed the aborted request (abort not propagated to upstream). abort interrupted local request; upstream PID 97288=alive; upstream request state=completed; original session alive=true; sibling session alive=true
 
 **23. 8.3 other session responsive during slow request (isolation)** [PASS]
-> session 2 responded in 4ms while session 1 delayed 4000ms — sessions isolated
+> session 2 responded in 5ms while session 1 delayed 4000ms — sessions isolated
 
 **24. 8.4 upstream disconnect: session invalidated, proxy stays alive** [CONSTRAINT]
 > disconnected session invalidated successfully; new session constrained: new session created but identity failed: Not connected — proxy may share upstream process across sessions
@@ -161,16 +161,16 @@ mcp-proxy \
 > session 2 affected by session 1 crash: Not connected — mcp-proxy uses shared upstream process, sessions not process-isolated
 
 **28. 10.1 three rapid session creations do not destabilize proxy** [PASS]
-> created sessions: 9a184e74, 3b6ea47d, 8772fb0b; original intact
+> created sessions: 4dee29ff, a34f4c8a, 78606157; original intact
 
 **29. 10.2 session header with garbage value is rejected** [PASS]
 > garbage session rejected (status 404)
 
 **30. 11.1 verify process tracking primitives** [PASS]
-> tracking primitives functional: pidExists=ok, portPid=100184, childrenFound=1
+> tracking primitives functional: pidExists=ok, portPid=70348, childrenFound=1
 
 **31. 11.2 deterministic descendant tracking — no system-wide baseline** [PASS]
-> proxy PID 98596, 2 tracked alive descendant(s): [92184, 73664]
+> proxy PID 98480, 2 tracked alive descendant(s): [86812, 98896]
 
 **32. 11.3 proxy stop terminates all tracked child processes** [PASS]
 > all 2 tracked descendant(s) and proxy terminated
@@ -191,7 +191,7 @@ mcp-proxy \
 > main proxy cleanup: all 2 tracked descendant(s) terminated
 
 **38. 13.4 temporary fixture cleanup** [PASS]
-> temp fixture removed: ggw-p1-02-1785090672643
+> temp fixture removed: ggw-p1-02-1785091385291
 
 
 **总计**: 32 PASS, 0 FAIL, 0 SKIP, 6 CONSTRAINT, 38 total
@@ -232,7 +232,7 @@ mcp-proxy 成功将 GitNexus stdio MCP 暴露为标准 Streamable HTTP endpoint�
 
 - P1-08 BLOCKED: GitNexus 1.6.9 does not expose generation-related MCP tools (resolve_generation, generation_status). Branch→generation resolution is unavailable. GraphGateway must use one-instance-per-generation deployment model until GitNexus adds generation support.
 - 7.3 unknown tool returns error: unknown tool returned no error — proxy passes through backend response
-- 8.2 client abort: observe upstream final state and session behavior: upstream continued and completed the aborted request (abort not propagated to upstream). abort interrupted local request; upstream PID 98364=alive; upstream request state=completed; original session alive=true; sibling session alive=true
+- 8.2 client abort: observe upstream final state and session behavior: upstream continued and completed the aborted request (abort not propagated to upstream). abort interrupted local request; upstream PID 97288=alive; upstream request state=completed; original session alive=true; sibling session alive=true
 - 8.4 upstream disconnect: session invalidated, proxy stays alive: disconnected session invalidated successfully; new session constrained: new session created but identity failed: Not connected — proxy may share upstream process across sessions
 - 9.2 crashed session cannot make further requests: some post-crash requests succeeded — session may not be fully invalidated
 - 9.3 other session remains operational after sibling crash: session 2 affected by session 1 crash: Not connected — mcp-proxy uses shared upstream process, sessions not process-isolated
@@ -264,5 +264,5 @@ mcp-proxy 成功将 GitNexus stdio MCP 暴露为标准 Streamable HTTP endpoint�
 - 清理结果（含孤儿 PID）计入测试结果和整体 verdict。
 
 ---
-*报告由 `scripts/interop/verify-mcp-proxy-gitnexus.mjs` 于 2026-07-26 18:34:14.812 UTC 自动生成。*
+*报告由 `scripts/interop/verify-mcp-proxy-gitnexus.mjs` 于 2026-07-26 18:46:08.980 UTC 自动生成。*
 *每个结论可追溯到第 3 节中的测试证据（PASS/FAIL/SKIP/CONSTRAINT）。*
