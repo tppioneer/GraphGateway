@@ -1,0 +1,10 @@
+error[E0594]: cannot assign to `*gen_id`, which is behind a `&` reference
+  --> tests/compile-fail/view_member_mutate_generation.rs:31:5
+   |
+31 |     *gen_id = GenerationId::new("gen-2").unwrap();
+   |     ^^^^^^^ `gen_id` is a `&` reference, so it cannot be written to
+   |
+help: consider specifying this binding's type
+   |
+29 |     let gen_id: &mut graphgateway_types::GenerationId = member.generation_id();
+   |               +++++++++++++++++++++++++++++++++++++++

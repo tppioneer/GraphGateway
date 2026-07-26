@@ -3,6 +3,7 @@
 //! See design §3.1, §4, §6.
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::ids::SourceId;
 
@@ -19,7 +20,7 @@ pub enum SourceKind {
     Local,
     /// Remote HTTPS endpoint.
     Remote,
-    /// Catch-all for forward compatibility — treat as remote.
+    /// Catch-all for forward compatibility — treat as remote, read-only.
     #[serde(other)]
     Unknown,
 }
@@ -119,16 +120,52 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// Returns `true` when the URL points to loopback.
-    pub fn is_loopback(&self) -> bool {
-        self.url.contains("127.0.0.1")
-            || self.url.contains("localhost")
-            || self.url.starts_with("http://[::1]")
+    /// Parse the endpoint URL and return the parsed components.
+    ///
+    /// Returns `None` when the URL cannot be parsed.
+    fn parsed_url(&self) -> Option<Url> {
+        Url::parse(&self.url).ok()
     }
 
-    /// Returns `true` when the scheme is HTTPS.
+    /// Returns `true` when the endpoint URL points to a loopback address.
+    ///
+    /// Uses proper URL parsing to prevent bypass via query strings,
+    /// hostname suffixes, or other tricks.  Accepted loopback forms:
+    ///
+    /// - IPv4: `127.0.0.1` (any port)
+    /// - IPv6: `[::1]` (any port)
+    /// - Hostname: `localhost` (exact match, case-insensitive)
+    pub fn is_loopback(&self) -> bool {
+        let Some(parsed) = self.parsed_url() else {
+            return false;
+        };
+
+        match parsed.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(url::Host::Domain(host)) => {
+                // Exact, case-insensitive match — "localhost" only.
+                // Rejects suffixes like "127.0.0.1.example.invalid" and
+                // subdomain tricks like "localhost.evil.com".
+                host.eq_ignore_ascii_case("localhost")
+            }
+            None => false,
+        }
+    }
+
+    /// Returns `true` when the endpoint URL uses the HTTPS scheme.
+    ///
+    /// Parses the URL to determine the scheme rather than relying on
+    /// string prefix matching.
     pub fn is_tls(&self) -> bool {
-        self.url.starts_with("https://")
+        self.parsed_url()
+            .map(|u| u.scheme() == "https")
+            .unwrap_or(false)
+    }
+
+    /// Returns the URL scheme, or `None` when the URL cannot be parsed.
+    pub fn scheme(&self) -> Option<String> {
+        self.parsed_url().map(|u| u.scheme().to_string())
     }
 }
 
@@ -300,8 +337,10 @@ mod tests {
 
     // -- Endpoint helpers ---------------------------------------------------
 
+    // === Positive loopback tests ===
+
     #[test]
-    fn endpoint_is_loopback() {
+    fn endpoint_is_loopback_ipv4() {
         let ep = Endpoint {
             url: "http://127.0.0.1:38471/mcp".into(),
             transport: Transport::StreamableHttp,
@@ -311,7 +350,70 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_is_not_loopback() {
+    fn endpoint_is_loopback_ipv4_any_port() {
+        let ep = Endpoint {
+            url: "http://127.0.0.1:9999/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_is_loopback_ipv4_class_a() {
+        // 127.0.0.0/8 — all addresses in this block are loopback.
+        let ep = Endpoint {
+            url: "http://127.255.255.255:8080/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_is_loopback_ipv6() {
+        let ep = Endpoint {
+            url: "http://[::1]:38471/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_is_loopback_localhost() {
+        let ep = Endpoint {
+            url: "http://localhost:38471/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_is_loopback_localhost_uppercase() {
+        let ep = Endpoint {
+            url: "http://LOCALHOST:38471/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_is_loopback_localhost_mixed_case() {
+        let ep = Endpoint {
+            url: "http://LocalHost:38471/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_loopback());
+    }
+
+    // === Negative loopback tests (bypass attempts) ===
+
+    #[test]
+    fn endpoint_is_not_loopback_remote() {
         let ep = Endpoint {
             url: "https://graph.example.com/mcp".into(),
             transport: Transport::StreamableHttp,
@@ -319,6 +421,103 @@ mod tests {
         };
         assert!(!ep.is_loopback());
         assert!(ep.is_tls());
+    }
+
+    #[test]
+    fn endpoint_not_loopback_localhost_in_query() {
+        // P103-R2: "localhost" as a query parameter does NOT make it loopback.
+        let ep = Endpoint {
+            url: "https://example.invalid/?localhost".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_not_loopback_ip_suffix() {
+        // P103-R2: "127.0.0.1" as a hostname suffix does NOT make it loopback.
+        let ep = Endpoint {
+            url: "http://127.0.0.1.example.invalid/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_not_loopback_localhost_subdomain() {
+        let ep = Endpoint {
+            url: "http://localhost.evil.com/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_not_loopback_localhost_in_path() {
+        let ep = Endpoint {
+            url: "https://example.com/localhost/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_loopback());
+    }
+
+    #[test]
+    fn endpoint_not_loopback_malformed_url() {
+        // A malformed URL cannot be parsed — treat as not loopback.
+        let ep = Endpoint {
+            url: "not-a-valid-url!!!".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_loopback());
+        assert!(!ep.is_tls());
+    }
+
+    #[test]
+    fn endpoint_not_loopback_empty_url() {
+        let ep = Endpoint {
+            url: "".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_loopback());
+        assert!(!ep.is_tls());
+    }
+
+    // === TLS tests ===
+
+    #[test]
+    fn endpoint_is_tls_https() {
+        let ep = Endpoint {
+            url: "https://graph.example.com/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(ep.is_tls());
+    }
+
+    #[test]
+    fn endpoint_is_not_tls_http() {
+        let ep = Endpoint {
+            url: "http://127.0.0.1:38471/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert!(!ep.is_tls());
+    }
+
+    #[test]
+    fn endpoint_scheme() {
+        let ep = Endpoint {
+            url: "https://graph.example.com/mcp".into(),
+            transport: Transport::StreamableHttp,
+            adapter: Adapter::McpProxy,
+        };
+        assert_eq!(ep.scheme().as_deref(), Some("https"));
     }
 
     // -- Source serde round-trip --------------------------------------------

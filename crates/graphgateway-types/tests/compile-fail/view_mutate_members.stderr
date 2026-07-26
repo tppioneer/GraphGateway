@@ -1,0 +1,5 @@
+error[E0599]: no method named `push` found for reference `&[graphgateway_types::ViewMember]` in the current scope
+  --> tests/compile-fail/view_mutate_members.rs:37:20
+   |
+37 |     view.members().push(ViewMember::new(
+   |     ---------------^^^^ method not found in `&[graphgateway_types::ViewMember]`
