@@ -2,7 +2,7 @@
 
 ## 元数据
 
-- State: `READY`
+- State: `IMPLEMENTING`
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-01、P1-02
@@ -68,4 +68,3 @@ cargo test -p graphgateway-types -p graphgateway-core --all-features
 
 返回 `AGENT_RESULT`：`DONE|BLOCKED`、完整提交 SHA、公开类型清单、变更文件、
 验证结果、兼容性风险。禁止顺带实现存储或 HTTP 层。
-

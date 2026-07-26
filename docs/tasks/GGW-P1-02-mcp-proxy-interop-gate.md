@@ -2,7 +2,7 @@
 
 ## 元数据
 
-- State: `READY`
+- State: `IMPLEMENTING`
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-01、P1-03
@@ -75,4 +75,3 @@ node scripts/interop/verify-mcp-proxy-gitnexus.mjs --fixture tests/fixtures/mcp/
 返回 `AGENT_RESULT`：`DONE|BLOCKED`、完整提交 SHA、兼容性结论、版本矩阵、
 验证输出、证据文件、对 P1-05/P1-08 的约束。不得把“进程能启动”等同于 MCP
 互操作通过。
-

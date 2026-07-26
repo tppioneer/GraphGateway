@@ -2,7 +2,7 @@
 
 ## 元数据
 
-- State: `READY`
+- State: `IMPLEMENTING`
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-02、P1-03
