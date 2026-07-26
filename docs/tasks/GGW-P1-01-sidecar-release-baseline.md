@@ -2,19 +2,19 @@
 
 ## 元数据
 
-- State: `CHANGES_REQUIRED`
+- State: `IMPLEMENTING`
 - Implementation HEAD: `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
 - Open findings: `P101-R1`、`P101-R3`
 - Closed findings: `P101-R2`
-- Remediation round: 2
-- Remediation budget: `EXHAUSTED`
-- Next action: 重新拆分剩余 finding 或记录显式例外；不得自动发起第三轮整改
-- Default executor: Claude Code
+- Remediation round: 3
+- Remediation budget: `USER_OVERRIDE_APPROVED`（2026-07-27）
+- Next action: GPT-5.6 仅处理剩余 `P101-R1`、`P101-R3`
+- Default executor: Codex（GPT-5.6）
 - Depends on: 无
 - Parallel with: P1-02、P1-03
 - Original base: `87afdaeb7c5579facb93edf15f786011ebb3c4ca`
-- Expected HEAD: `8115f12247ea03f509d505e878369126776123e1`
+- Expected HEAD: `aab3c4ca920f0c1d25975b3eee60f2acadb8f0ba`
 - Suggested branch: `codex/ggw-p1-01-sidecar-release`
 - Suggested worktree: `F:\develop\worktrees\GraphGateway-p1-01`
 - Budget: 一次实现，最多两轮整改
