@@ -6,6 +6,23 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::{watch, Mutex};
 
+/// Optional production diagnostic sink used by unattended launches and
+/// packaged smoke tests. The file contains the same redacted snapshot exposed
+/// to the frontend; startup tokens are never included.
+fn write_startup_diagnostic(snapshot: &graphgateway_types::SidecarSnapshot) {
+    let Ok(path) = std::env::var("GRAPHGATEWAY_STARTUP_DIAGNOSTIC_FILE") else {
+        return;
+    };
+    match serde_json::to_vec(snapshot) {
+        Ok(json) => {
+            if let Err(error) = std::fs::write(&path, json) {
+                tracing::warn!(%error, %path, "failed to write startup diagnostic");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "failed to serialize startup diagnostic"),
+    }
+}
+
 /// Application state shared across all Tauri commands.
 struct AppState {
     /// The sidecar manager, protected by a Tokio async mutex.
@@ -42,6 +59,7 @@ pub fn run() {
                 let mut guard = mgr.lock().await;
                 if let Err(e) = guard.start().await {
                     tracing::warn!(error = %e, "auto-start failed (user can retry)");
+                    write_startup_diagnostic(&guard.build_snapshot());
                 }
                 drop(guard);
 

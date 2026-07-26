@@ -98,7 +98,7 @@ function nodeHostTriple() {
  * @param {string|null} cliTarget
  * @returns {{ targetTriple: string, hostTriple: string }}
  */
-function resolveTargetTriple(cliTarget) {
+export function resolveTargetTriple(cliTarget) {
   const hostTriple = rustcHostTriple() || nodeHostTriple();
 
   let targetTriple;
@@ -127,6 +127,10 @@ function resolveTargetTriple(cliTarget) {
   return { targetTriple, hostTriple };
 }
 
+export function targetArtifactPath(root, targetTriple) {
+  return join(root, "target", targetTriple, "release", "graphgateway.exe");
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -145,24 +149,10 @@ function main() {
   // Source: Cargo places artifacts under target/<target-triple>/release/
   // when --target is used.  For a cross-compiled target we MUST NOT fall
   // back to the host default directory — that would relabel a host binary.
-  const crossSrc = join(
-    workspaceRoot,
-    "target",
-    targetTriple,
-    "release",
-    "graphgateway.exe"
-  );
+  const crossSrc = targetArtifactPath(workspaceRoot, targetTriple);
   const hostSrc = join(workspaceRoot, "target", "release", "graphgateway.exe");
 
-  let src = crossSrc;
-  if (!existsSync(crossSrc)) {
-    if (!isCrossTarget && existsSync(hostSrc)) {
-      // Host build without explicit --target may place artifact in the
-      // default directory.  This is safe because the host binary matches
-      // the host target.
-      src = hostSrc;
-    }
-  }
+  const src = crossSrc;
 
   if (!existsSync(src)) {
     console.error(`ERROR: Sidecar binary not found.`);
@@ -181,7 +171,7 @@ function main() {
         `    cargo build -p graphgateway-server --release --target ${targetTriple}`
       );
     } else {
-      console.error(`  Also tried: ${hostSrc}`);
+      console.error(`  Host fallback is disabled: ${hostSrc}`);
       console.error(
         "Build it first: cargo build -p graphgateway-server --release"
       );
@@ -207,4 +197,6 @@ function main() {
   console.log(`Sidecar ready: ${sidecarName}`);
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

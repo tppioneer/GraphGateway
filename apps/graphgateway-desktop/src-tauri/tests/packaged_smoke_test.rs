@@ -39,6 +39,14 @@ mod packaged_smoke {
     /// because one hides files the other needs.
     static BINARIES_LOCK: Mutex<()> = Mutex::new(());
 
+    struct TemporaryFile(PathBuf);
+
+    impl Drop for TemporaryFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Path resolution
     // -----------------------------------------------------------------------
@@ -412,7 +420,7 @@ mod packaged_smoke {
     #[test]
     fn packaged_desktop_launches_sidecar_and_cleans_up() {
         // Serialize with missing_sidecar test — both access the shared binaries dir.
-        let _binaries_guard = BINARIES_LOCK.lock().unwrap();
+        let _binaries_guard = BINARIES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let exe = desktop_exe_path();
         if !exe.exists() {
@@ -619,7 +627,7 @@ mod packaged_smoke {
     #[test]
     fn missing_sidecar_causes_clean_failure() {
         // Serialize with the happy-path test — this test hides binaries the other needs.
-        let _binaries_guard = BINARIES_LOCK.lock().unwrap();
+        let _binaries_guard = BINARIES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let exe = desktop_exe_path();
         if !exe.exists() {
@@ -642,11 +650,15 @@ mod packaged_smoke {
         // resolve_sidecar_path uses a non-existent target for paths 2 and 3.
         // Capture stderr to verify diagnostible error output.
         let exe_path = desktop_exe_path();
+        let diagnostic_path =
+            std::env::temp_dir().join(format!("graphgateway-missing-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&diagnostic_path);
         let mut cmd = Command::new(&exe_path);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .env("CARGO_BUILD_TARGET", "mips64-pc-windows-msvc");
+            .env("CARGO_BUILD_TARGET", "mips64-pc-windows-msvc")
+            .env("GRAPHGATEWAY_STARTUP_DIAGNOSTIC_FILE", &diagnostic_path);
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
@@ -689,7 +701,6 @@ mod packaged_smoke {
             let _ = stderr_pipe.read_to_string(&mut stderr_buf);
         }
 
-        let has_error_output = !stderr_buf.is_empty();
         let has_sidecar_msg = stderr_buf.to_lowercase().contains("sidecar");
         let has_resolve_msg = stderr_buf.to_lowercase().contains("resolve")
             || stderr_buf.to_lowercase().contains("not found");
@@ -703,18 +714,19 @@ mod packaged_smoke {
             stderr_buf.len()
         );
 
-        // Stderr may be empty for Windows GUI-subsystem binaries (no console
-        // attached).  This is expected when no tracing subscriber writes to
-        // stderr.  The core assertions are: no sidecar spawned and no orphans.
-        if !has_error_output {
-            eprintln!(
-                "NOTE: desktop produced no stderr output.  This is expected for \
-                 Windows GUI-subsystem binaries without a tracing subscriber \
-                 writing to stderr.  The diagnostic signal is the absence of \
-                 sidecar processes — the desktop detected the missing binary \
-                 and handled it correctly."
-            );
-        }
+        let diagnostic = std::fs::read_to_string(&diagnostic_path)
+            .expect("missing sidecar must produce a startup diagnostic snapshot");
+        let snapshot: graphgateway_types::SidecarSnapshot =
+            serde_json::from_str(&diagnostic).expect("startup diagnostic must be valid JSON");
+        assert_eq!(snapshot.state, graphgateway_types::SidecarState::Failed);
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .is_some_and(|error| !error.trim().is_empty()),
+            "missing sidecar diagnostic last_error must be nonempty"
+        );
+        let _ = std::fs::remove_file(&diagnostic_path);
 
         // Verify no orphan processes remain.
         let final_pids = find_sidecar_pids();
@@ -732,6 +744,67 @@ mod packaged_smoke {
 
         guard.mark_success();
         // _hider drop restores files.
+    }
+
+    #[test]
+    fn corrupted_sidecar_causes_diagnosable_clean_failure() {
+        let _binaries_guard = BINARIES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let exe = desktop_exe_path();
+        assert!(
+            exe.exists(),
+            "SMOKE GATE FAILED: desktop executable missing"
+        );
+        let before_pids = find_sidecar_pids();
+        let mut guard = TestGuard::new(before_pids.clone());
+        let _hider = SidecarHider::hide();
+
+        let corrupt_path = binaries_dir().join("graphgateway.exe");
+        std::fs::create_dir_all(binaries_dir()).unwrap();
+        std::fs::write(&corrupt_path, b"not a Windows executable").unwrap();
+        let _corrupt_file = TemporaryFile(corrupt_path.clone());
+        let diagnostic_path =
+            std::env::temp_dir().join(format!("graphgateway-corrupt-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&diagnostic_path);
+
+        let mut child = Command::new(&exe)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .env("GRAPHGATEWAY_STARTUP_DIAGNOSTIC_FILE", &diagnostic_path)
+            .spawn()
+            .expect("failed to spawn desktop");
+        guard.desktop_pid = Some(child.id());
+        std::thread::sleep(Duration::from_secs(15));
+
+        let diagnostic = std::fs::read_to_string(&diagnostic_path)
+            .expect("corrupted sidecar must produce a startup diagnostic snapshot");
+        let snapshot: graphgateway_types::SidecarSnapshot =
+            serde_json::from_str(&diagnostic).expect("startup diagnostic must be valid JSON");
+        assert_eq!(snapshot.state, graphgateway_types::SidecarState::Failed);
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .is_some_and(|error| !error.trim().is_empty()),
+            "corrupted sidecar diagnostic last_error must be nonempty"
+        );
+        assert!(
+            find_sidecar_pids()
+                .iter()
+                .all(|pid| before_pids.contains(pid)),
+            "corrupted sidecar left a running process"
+        );
+
+        force_kill_process(child.id());
+        let _ = child.wait();
+        let _ = std::fs::remove_file(&corrupt_path);
+        let _ = std::fs::remove_file(&diagnostic_path);
+        let orphan_pids: Vec<u32> = find_sidecar_pids()
+            .into_iter()
+            .filter(|pid| !before_pids.contains(pid))
+            .collect();
+        assert!(orphan_pids.is_empty(), "orphan processes: {orphan_pids:?}");
+        guard.mark_success();
     }
 
     // -----------------------------------------------------------------------
