@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicepage/nicepage/refs/heads/main/tauri-conf.schema.json",
   "productName": "GraphGateway Desktop",
   "version": "0.1.0",
   "identifier": "com.graphgateway.desktop",
@@ -7,7 +6,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build && cargo build -p graphgateway-server --release && node scripts/copy-sidecar.mjs"
   },
   "app": {
     "windows": [

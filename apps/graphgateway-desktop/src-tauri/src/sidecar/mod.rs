@@ -725,33 +725,52 @@ fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + 
     let target_triple = build_target_triple();
     let sidecar_name = format!("graphgateway-{target_triple}.exe");
 
+    // Collect the candidate paths we check for richer error reporting.
+    let mut candidates: Vec<String> = Vec::new();
+
     // 1. Check relative to the current executable (production layout).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            // Production: sidecar next to the desktop EXE
-            let prod = dir.join("graphgateway.exe");
-            if prod.exists() {
-                tracing::debug!(path = %prod.display(), "found sidecar next to exe");
-                return Ok(prod);
-            }
-            // Alternative: sidecar in a 'binaries' subdirectory
-            let prod_bin = dir.join("binaries").join(&sidecar_name);
-            if prod_bin.exists() {
-                tracing::debug!(path = %prod_bin.display(), "found sidecar in binaries dir");
-                return Ok(prod_bin);
-            }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+    if let Some(ref dir) = exe_dir {
+        // Production: sidecar next to the desktop EXE
+        let prod = dir.join("graphgateway.exe");
+        candidates.push(prod.display().to_string());
+        if prod.exists() {
+            tracing::debug!(path = %prod.display(), "found sidecar next to exe");
+            return Ok(prod);
         }
+        // Alternative: sidecar in a 'binaries' subdirectory
+        let prod_bin = dir.join("binaries").join(&sidecar_name);
+        candidates.push(prod_bin.display().to_string());
+        if prod_bin.exists() {
+            tracing::debug!(path = %prod_bin.display(), "found sidecar in binaries dir");
+            return Ok(prod_bin);
+        }
+    } else {
+        candidates.push("<could not determine executable directory>".into());
+        candidates.push("<same>".into());
     }
 
     // 2. Check Tauri externalBin dev layout (binaries/ relative to src-tauri).
     // In Tauri dev mode, the current directory is typically the src-tauri dir.
+    let cwd = std::env::current_dir().ok();
     let dev_path = PathBuf::from("binaries").join(&sidecar_name);
+    candidates.push(format!(
+        "{} (relative to {})",
+        dev_path.display(),
+        cwd.as_ref()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "?".into())
+    ));
     if dev_path.exists() {
         tracing::debug!(path = %dev_path.display(), "found sidecar in dev binaries");
         return Ok(dev_path);
     }
 
     let dev_simple = PathBuf::from("binaries").join("graphgateway.exe");
+    candidates.push(dev_simple.display().to_string());
     if dev_simple.exists() {
         tracing::debug!(path = %dev_simple.display(), "found sidecar (simple name) in dev binaries");
         return Ok(dev_simple);
@@ -759,22 +778,30 @@ fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + 
 
     // 3. Workspace target/debug fallback (for development convenience).
     let workspace_target = PathBuf::from("../../target/debug/graphgateway.exe");
+    candidates.push(workspace_target.display().to_string());
     if workspace_target.exists() {
         tracing::debug!(path = %workspace_target.display(), "found sidecar in workspace target");
         return Ok(workspace_target.canonicalize().unwrap_or(workspace_target));
     }
 
-    Err(format!(
-        "sidecar binary not found (triple: {target_triple}).\n\
-         Looked in:\n\
-         - next to the desktop executable\n\
-         - binaries/graphgateway-{target_triple}.exe\n\
-         - binaries/graphgateway.exe\n\
-         - ../../target/debug/graphgateway.exe\n\
-         \n\
-         Build: cargo build -p graphgateway-server\n\
-         Copy: copy target\\debug\\graphgateway.exe apps\\graphgateway-desktop\\src-tauri\\binaries\\graphgateway-{target_triple}.exe"
-    ).into())
+    let mut msg = format!(
+        "sidecar binary not found (target triple: {target_triple}).\n\
+         Expected binary name: {sidecar_name}\n\
+         Searched locations:\n"
+    );
+    for (i, c) in candidates.iter().enumerate() {
+        msg.push_str(&format!("  {}. {c}\n", i + 1));
+    }
+    msg.push_str(&format!(
+        "\n\
+         Resolve this with one of:\n\
+         - Release build:  cargo tauri build       (auto-builds sidecar via beforeBuildCommand)\n\
+         - Manual release: npm run build:sidecar   (builds sidecar & copies to binaries/)\n\
+         - Dev build:      cargo build -p graphgateway-server  (then use cargo tauri dev)\n\
+         - Manual copy:    copy target\\debug\\graphgateway.exe apps\\graphgateway-desktop\\src-tauri\\binaries\\graphgateway-{target_triple}.exe",
+    ));
+
+    Err(msg.into())
 }
 
 fn build_target_triple() -> &'static str {

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:sidecar": "cargo build -p graphgateway-server --release && node scripts/copy-sidecar.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
