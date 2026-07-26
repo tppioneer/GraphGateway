@@ -1,0 +1,10 @@
+error[E0594]: cannot assign to `c.source_id`, which is behind a `&` reference
+  --> tests/compile-fail/view_member_mutate_capability.rs:30:5
+   |
+30 |     c.source_id = SourceId::new("evil").unwrap();
+   |     ^^^^^^^^^^^ `c` is a `&` reference, so it cannot be written to
+   |
+help: consider specifying this binding's type
+   |
+29 |     let c: &mut graphgateway_types::CapabilitySnapshot = member.capability();
+   |          +++++++++++++++++++++++++++++++++++++++++++++

@@ -1,0 +1,10 @@
+error[E0594]: cannot assign to `ep.url`, which is behind a `&` reference
+  --> tests/compile-fail/view_member_mutate_endpoint.rs:30:5
+   |
+30 |     ep.url = "http://evil.com/mcp".into();
+   |     ^^^^^^ `ep` is a `&` reference, so it cannot be written to
+   |
+help: consider specifying this binding's type
+   |
+29 |     let ep: &mut graphgateway_types::Endpoint = member.endpoint();
+   |           +++++++++++++++++++++++++++++++++++

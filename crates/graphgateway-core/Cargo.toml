@@ -11,5 +11,7 @@ description = "GraphGateway domain logic — no Axum, Reqwest, rmcp, or Tauri de
 [dependencies]
 graphgateway-types.workspace = true
 rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 subtle.workspace = true
 thiserror.workspace = true

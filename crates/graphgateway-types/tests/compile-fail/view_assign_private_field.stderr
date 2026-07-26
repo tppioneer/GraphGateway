@@ -1,0 +1,5 @@
+error[E0616]: field `view_id` of struct `graphgateway_types::ResolvedGraphView` is private
+  --> tests/compile-fail/view_assign_private_field.rs:37:10
+   |
+37 |     view.view_id = ViewId::new("v-2").unwrap();
+   |          ^^^^^^^ private field
