@@ -81,22 +81,21 @@
 
 ## GGW-P1-02
 
-- Head: `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- Head: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Tested code commit: `8c29d71aa496bdd92b551d176eb56c95507e64a5`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-02`
 - Verdict: `CHANGES_REQUIRED`
 
 ### P102-R1 — High / High confidence
 
-- Status: OPEN after remediation
-  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
-- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:88-110`,
-  `:230-270`, `:606-632`
-- Evidence: 结果模型虽已改为 `PASS|FAIL|SKIP|CONSTRAINT`，但必需前置命令仍通过
-  吞掉异常的 `sh()` 执行。独立运行中 `git commit` 因 shell 将提交消息拆成
-  pathspec 而失败，runner 只记录 note，继续索引并把固定仓库 tests 4.1-4.5
-  全部记为 PASS。`gitnexus analyze` 同样使用 `sh()`，非零退出不会进入
-  `catch`；repo 无法精确解析时又退回 basename。query/context 失败后还会改为
-  不带 repo 的全局查询或仅凭 `file_path` 查询，并继续返回 PASS。
+- Status: OPEN after remediation round 2
+  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:281-411`,
+  `:749-765`
+- Evidence: fixture 初始化、Git 提交、GitNexus analyze 以及 query/context
+  的 fail-fast 与 repo 参数绑定已补齐；但 canonical identity 的精确路径匹配失败后，
+  `:392-404` 仍会仅凭 `path:` 行包含 fixture basename 选择 repo。不同目录下存在
+  同名仓库时可绑定到错误索引，随后 4.2-4.4 仍可能把另一仓库的结果记为 PASS。
 - Violated item: verdict 和每个结论必须可追溯到真实协议证据；失败时应返回非零。
 - Expected: 所有 fixture 初始化、Git 提交和 GitNexus analyze 命令必须
   fail-fast；精确确认临时 fixture 的 canonical identity 后才运行协议门禁。
@@ -104,16 +103,15 @@
 
 ### P102-R2 — High / High confidence
 
-- Status: OPEN after remediation
-  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
-- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:741-808`,
-  `tests/fixtures/mcp/controllable-server.mjs:139-146`
-- Evidence: 可控 fixture 已能制造 delay/crash/disconnect，且上游 crash 场景已
-  实际执行；但 cancellation test 只断言本地 `fetch` 在 500 ms 收到
-  `AbortError`，随后立即强制终止整个 proxy，没有证明延迟中的上游请求被取消、
-  对应 Session 被回收或同一 proxy 的其他 Session 不受影响。fixture 的
-  `disconnect` tool 没有被任何测试调用，因此“客户端断开和 Session 清理”仍无
-  端到端证据。
+- Status: OPEN after remediation round 2
+  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:875-962`,
+  `:1001-1063`
+- Evidence: disconnect 已进入必需门禁并记录共享上游约束；但 abort 测试仍只证明
+  本地 `fetch` 收到 `AbortError`。它没有观察 20 秒 delay 是否在上游被终止，
+  upstream PID 改变时只写 NOTE，且 `siblingAlive=false` 仍执行
+  `return PASS(...)`。因此当前 PASS 不能证明上游请求终止、相关资源回收或 sibling
+  Session 一定可用。
 - Violated item: 必须验证并记录上游异常、超时和客户端断开。
 - Expected: abort/disconnect 后保持 proxy 运行，分别观察并断言上游请求终止、
   被断开 Session 的后续行为、相关子进程回收，以及 sibling Session 的可用性；
@@ -121,18 +119,16 @@
 
 ### P102-R3 — High / High confidence
 
-- Status: OPEN after remediation
-  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
-- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:941-1045`,
-  `:1133-1282`, `:1345-1383`;
-  `docs/compatibility/mcp-proxy-gitnexus-interop-report.md:33,155,200`
-- Evidence: 独立运行中 descendant 查询实际返回空，runner 转而把全系统 13 个
-  新 PID 的前 8 个当作子进程；其中多个在关联验证前已退出，11.2 仍为 PASS，
-  随后这些任意 PID 恰好消失又使 11.3 PASS。报告在 cleanup 前生成；最终 cleanup
-  警告仍有 6 个新 PID，却不进入测试结果或 verdict。报告还同时断言“每 Session
-  一个独立 GitNexus 子进程”和“共享 upstream 导致 sibling Session 失败”，
-  会话/进程模型自相矛盾。stdout/stderr 测试也只比较两个 buffer 的字节数，
-  未验证 stdout 只含协议消息或 stderr 日志不污染协议通道。
+- Status: OPEN after remediation round 2
+  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:1283-1299`,
+  `:1349-1395`, `:1652-1656`, `:1774-1782`
+- Evidence: 全系统 PID 差值回退已删除，本轮独立运行可确定性追踪并回收两个
+  descendant，报告的共享上游模型也已统一；但 11.2 的代理功能检查失败只写日志，
+  仍会把任意存活 descendant 判为“服务 MCP 流量”。11.4 只排除 proxy stderr
+  中出现 JSON-RPC/部分 payload，并未观测 GitNexus MCP stdout 是否只含协议帧，
+  却在报告中断言 upstream stdout 与日志已隔离。此外报告仍在临时 fixture cleanup
+  之前写入，cleanup 异常只记录 warning，不进入结果或 verdict。
 - Violated item: 明确会话/进程映射、proxy 退出后的子进程行为，且结论来自证据。
 - Expected: 使用可靠的 parent/child 或 Job Object 关联证明每个被测 PID 的归属；
   无法建立关联时 FAIL，不得使用全系统 PID 差值替代。把所有 cleanup 结果纳入
@@ -141,36 +137,41 @@
 
 ### P102-R4 — Medium / High confidence
 
-- Status: RESOLVED at
-  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
-- Location: `.gitignore:59-63`,
+- Status: REOPENED after remediation round 2
+  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Location: `.gitignore:59`,
   `scripts/interop/verify-mcp-proxy-gitnexus.mjs:212-280`
-- Closure evidence: 累计整改差异只从根 `.gitignore` 删除原先越界的 fixture
-  规则，没有新增仓库级规则；runner 将 fixture 源文件复制到 OS 临时目录，
-  排除 `.git`、`.gitnexus`、`.claude`，运行结束后删除该临时目录。
+- Evidence: runner 已改用 OS 临时 fixture，原 fixture ignore 规则也已删除；
+  但从任务原始基线
+  `87afdaeb7c5579facb93edf15f786011ebb3c4ca` 到最终 HEAD 的累计差异仍在根
+  `.gitignore` 新增一个空行。即使不改变 ignore 语义，这仍是 Allowed scope
+  之外的净修改，R4 的关闭条件未满足。
 
 ### P102-R5 — Medium / High confidence
 
 - Status: RESOLVED at
-  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
 - Location: `docs/compatibility/mcp-proxy-gitnexus-interop-report.md:6,35`
-- Closure evidence: 报告提交位于被测代码提交
-  `16eb2d1131511816d8a81f3d35eb808d61f333a5` 之后，`Tested commit`
+- Closure evidence: 最终报告提交位于被测代码提交
+  `8c29d71aa496bdd92b551d176eb56c95507e64a5` 之后，`Tested commit`
   精确记录该代码提交；fixture 使用仓库相对路径
   `tests\fixtures\mcp\sample-repo`，报告和互操作目录扫描未发现本机绝对路径。
 
 ### Verification evidence
 
 - `node --check scripts/interop/verify-mcp-proxy-gitnexus.mjs`: PASS
-- `node ... --help`: PASS
 - `node --version`: PASS，`v24.14.1`
 - `mcp-proxy --version`: PASS，`6.5.4`
 - `gitnexus --version`: PASS，`1.6.9`
-- 独立完整运行：31 PASS、0 FAIL、0 SKIP、4 CONSTRAINT，
-  `PASS_WITH_CONSTRAINTS`；但实际同时出现 fixture commit 失败、无可靠 descendant
-  关联和 cleanup 后 6 个新 PID 告警，均未反映到报告 verdict
+- detached worktree 基于 tested code commit 独立完整运行：32 PASS、0 FAIL、
+  0 SKIP、5 CONSTRAINT，报告结论 `PASS_WITH_CONSTRAINTS`
+- 本轮运行中 fixture Git 提交和 canonical path 首选匹配成功；两个被测
+  GitNexus descendant 与主 proxy descendant 均成功回收，运行结束后未发现属于
+  detached review worktree 的残留进程
+- 运行报告的 `Tested commit` 精确为
+  `8c29d71aa496bdd92b551d176eb56c95507e64a5`，绝对路径扫描无匹配
 - generation 能力缺失证据可信：P1-08 保持 BLOCKED
-- P102-R4、P102-R5 关闭；P102-R1、P102-R2、P102-R3 继续保持 OPEN
+- P102-R5 关闭；P102-R1、P102-R2、P102-R3 继续保持 OPEN，P102-R4 重新打开
 
 ## GGW-P1-03
 
@@ -236,10 +237,11 @@
 | Task | Verdict | Open findings |
 | --- | --- | --- |
 | GGW-P1-01 | `CHANGES_REQUIRED` | P101-R1、P101-R3 |
-| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3 |
+| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4 |
 | GGW-P1-03 | `PASS` | 无 |
 
 GGW-P1-03 已集成到 `mcp`；GGW-P1-01 与 GGW-P1-02 仍为
 `CHANGES_REQUIRED`，不得集成。GGW-P1-01 已用尽两轮整改预算，不得自动发起
 第三轮；剩余 P101-R1/P101-R3 必须重新拆卡或由用户批准并记录显式例外。
-GGW-P1-02 后续整改仍须基于当前完整 Implementation HEAD，保留未关闭 finding ID。
+GGW-P1-02 也已用尽两轮整改预算；剩余 P102-R1/P102-R2/P102-R3/P102-R4
+不得自动发起第三轮，必须重新拆卡或由用户批准并记录显式例外。
