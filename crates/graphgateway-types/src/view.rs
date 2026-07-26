@@ -51,10 +51,15 @@ pub struct ViewMember {
 impl ViewMember {
     /// Create a new [`ViewMember`] with validated required fields.
     ///
+    /// The member is created as available (`unavailable = false`).
+    /// Use [`ViewMember::new_unavailable`] to construct a member that was
+    /// unavailable during resolution.
+    ///
     /// # Errors
     ///
     /// Returns `Err` when `repo_id`, `branch`, or `head_sha` is empty or
-    /// whitespace-only.
+    /// whitespace-only, or when `capability.source_id` does not match
+    /// `source_id`.
     pub fn new(
         source_id: SourceId,
         repo_id: String,
@@ -63,6 +68,60 @@ impl ViewMember {
         head_sha: String,
         endpoint: Endpoint,
         capability: CapabilitySnapshot,
+    ) -> Result<Self, String> {
+        Self::construct(
+            source_id,
+            repo_id,
+            branch,
+            generation_id,
+            head_sha,
+            endpoint,
+            capability,
+            false,
+        )
+    }
+
+    /// Create a [`ViewMember`] that was unavailable during resolution.
+    ///
+    /// The member is marked `unavailable: true`.  Query results for this
+    /// member will be marked degraded.  The `generation_id` and
+    /// `head_sha` should reflect the last-known-good values.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` for the same reasons as [`ViewMember::new`].
+    pub fn new_unavailable(
+        source_id: SourceId,
+        repo_id: String,
+        branch: String,
+        generation_id: GenerationId,
+        head_sha: String,
+        endpoint: Endpoint,
+        capability: CapabilitySnapshot,
+    ) -> Result<Self, String> {
+        Self::construct(
+            source_id,
+            repo_id,
+            branch,
+            generation_id,
+            head_sha,
+            endpoint,
+            capability,
+            true,
+        )
+    }
+
+    /// Shared validation and construction.
+    #[allow(clippy::too_many_arguments)]
+    fn construct(
+        source_id: SourceId,
+        repo_id: String,
+        branch: String,
+        generation_id: GenerationId,
+        head_sha: String,
+        endpoint: Endpoint,
+        capability: CapabilitySnapshot,
+        unavailable: bool,
     ) -> Result<Self, String> {
         if repo_id.trim().is_empty() {
             return Err("repo_id must not be empty".into());
@@ -73,13 +132,19 @@ impl ViewMember {
         if head_sha.trim().is_empty() {
             return Err("head_sha must not be empty".into());
         }
+        if capability.source_id != source_id {
+            return Err(format!(
+                "capability snapshot source_id '{}' does not match member source_id '{}'",
+                capability.source_id, source_id,
+            ));
+        }
         Ok(Self {
             source_id,
             repo_id,
             branch,
             generation_id,
             head_sha,
-            unavailable: false,
+            unavailable,
             endpoint,
             capability,
         })
@@ -351,6 +416,20 @@ mod tests {
     }
 
     #[test]
+    fn view_member_new_rejects_mismatched_capability_source_id() {
+        let result = ViewMember::new(
+            SourceId::new("s1").unwrap(),
+            "r".into(),
+            "b".into(),
+            GenerationId::new("gen-1").unwrap(),
+            "abc".into(),
+            sample_endpoint(),
+            sample_capability("different-source"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn resolved_view_new_rejects_empty_members() {
         let result = ResolvedGraphView::new(
             ViewId::new("v-1").unwrap(),
@@ -385,6 +464,24 @@ mod tests {
         assert!(!m.unavailable());
         assert_eq!(m.endpoint().url, "http://127.0.0.1:38471/mcp");
         assert!(m.capability().supports("query"));
+    }
+
+    #[test]
+    fn view_member_unavailable_constructor() {
+        let m = ViewMember::new_unavailable(
+            SourceId::new("s1").unwrap(),
+            "r".into(),
+            "b".into(),
+            GenerationId::new("gen-1").unwrap(),
+            "abc".into(),
+            sample_endpoint(),
+            sample_capability("s1"),
+        )
+        .unwrap();
+        assert!(m.unavailable());
+        assert_eq!(m.source_id().as_ref(), "s1");
+        assert_eq!(m.generation_id().as_ref(), "gen-1");
+        assert_eq!(m.head_sha(), "abc");
     }
 
     #[test]
@@ -429,26 +526,24 @@ mod tests {
 
     #[test]
     fn is_degraded_true() {
-        // Deserialize a view with an unavailable member via JSON to bypass
-        // the validated constructor (which always sets unavailable=false).
-        let view: ResolvedGraphView = serde_json::from_str(
-            r#"{
-                "view_id": "view-degraded",
-                "workspace_id": "ws-1",
-                "members": [
-                    {
-                        "source_id": "s1",
-                        "repo_id": "r",
-                        "branch": "b",
-                        "generation_id": "gen-1",
-                        "head_sha": "abc",
-                        "unavailable": true,
-                        "endpoint": {"url":"http://127.0.0.1:1/mcp","transport":"streamable_http","adapter":"mcp_proxy"},
-                        "capability": {"source_id":"s1","capabilities":[],"captured_at":"now"}
-                    }
-                ],
-                "resolved_at": "now"
-            }"#,
+        // Construct a degraded view through the typed API — no JSON bypass
+        // needed now that ViewMember::new_unavailable exists.
+        let view = ResolvedGraphView::new(
+            ViewId::new("view-degraded").unwrap(),
+            WorkspaceId::new("ws-1").unwrap(),
+            vec![
+                ViewMember::new_unavailable(
+                    SourceId::new("s1").unwrap(),
+                    "r".into(),
+                    "b".into(),
+                    GenerationId::new("gen-1").unwrap(),
+                    "abc".into(),
+                    sample_endpoint(),
+                    sample_capability("s1"),
+                )
+                .unwrap(),
+            ],
+            "now".into(),
         )
         .unwrap();
         assert!(view.is_degraded());

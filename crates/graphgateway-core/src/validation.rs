@@ -332,6 +332,16 @@ pub fn validate_view_member(member: &ViewMember) -> Result<(), DomainError> {
             format!("view member '{}' has empty head_sha", member.source_id(),),
         ));
     }
+    if &member.capability().source_id != member.source_id() {
+        return Err(DomainError::new(
+            ErrorCode::SourceNotFound,
+            format!(
+                "view member '{}' has capability snapshot for source '{}'",
+                member.source_id(),
+                member.capability().source_id,
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -838,6 +848,36 @@ mod tests {
         )
         .unwrap();
         assert!(validate_resolved_view(&view).is_err());
+    }
+
+    #[test]
+    fn reject_view_member_with_mismatched_capability_source_id() {
+        // Construct via JSON so the mismatched capability bypasses the
+        // constructor validation.  This tests the validator's own
+        // detection of the mismatch (P103-R1).
+        let view: ResolvedGraphView = serde_json::from_str(
+            r#"{
+                "view_id": "v-1",
+                "workspace_id": "ws-1",
+                "members": [
+                    {
+                        "source_id": "s1",
+                        "repo_id": "r",
+                        "branch": "b",
+                        "generation_id": "gen-1",
+                        "head_sha": "abc",
+                        "unavailable": false,
+                        "endpoint": {"url":"http://127.0.0.1:1/mcp","transport":"streamable_http","adapter":"mcp_proxy"},
+                        "capability": {"source_id":"other-source","capabilities":[],"captured_at":"now"}
+                    }
+                ],
+                "resolved_at": "now"
+            }"#,
+        )
+        .unwrap();
+        let err = validate_resolved_view(&view).unwrap_err();
+        assert_eq!(err.code, ErrorCode::SourceNotFound);
+        assert!(err.message.contains("capability snapshot"));
     }
 
     #[test]
