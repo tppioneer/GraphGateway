@@ -178,6 +178,18 @@ function pidExists(pid) {
   return out.includes(String(pid));
 }
 
+/** Recursively find all descendant PIDs (children, grandchildren, etc.). */
+function findDescendantPids(parentPid, depth) {
+  depth = depth || 0;
+  if (depth > 3) return []; // safety limit
+  const children = findChildPids(parentPid);
+  let all = [...children];
+  for (const cpid of children) {
+    all = all.concat(findDescendantPids(cpid, depth + 1));
+  }
+  return [...new Set(all)];
+}
+
 // ── temp directory for fixture runtime (P102-R4) ─────────────────────────────
 async function createTempFixture(fixturePath, log) {
   const tmpBase = join(tmpdir(), `ggw-p1-02-${Date.now()}`);
@@ -283,7 +295,7 @@ class ProcessManager {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false,
         windowsHide: true,
-        shell: platform === 'win32',
+        shell: false,
       });
       this.proxy = child;
       this.proxyPid = child.pid;
@@ -904,8 +916,8 @@ test('11.2 proxy start creates new child processes', async (_client, _fixture, l
   await sleep(2000);
 
   // Find direct child processes of the proxy PID
-  const childPids = findChildPids(pm2.proxyPid);
-  log(`    proxy PID ${pm2.proxyPid}, direct children: [${childPids.join(', ') || 'none'}]`);
+  const childPids = findDescendantPids(pm2.proxyPid);
+  log(`    proxy PID ${pm2.proxyPid}, descendants: [${childPids.join(', ') || 'none'}]`);
 
   // Also detect all new PIDs system-wide (broader coverage)
   const currentPids = getAllPids();
@@ -947,7 +959,7 @@ test('11.2 proxy start creates new child processes', async (_client, _fixture, l
   args._trackedPids = trackedPids;
   args._trackedPm2 = pm2;
 
-  return PASS(`proxy PID ${pm2.proxyPid}, direct children: ${childPids.length}, all new PIDs: ${allNewPids.length}. Tracked: [${trackedPids.join(', ')}]`);
+  return PASS(`proxy PID ${pm2.proxyPid}, descendants: ${childPids.length}, all new PIDs: ${allNewPids.length}. Tracked: [${trackedPids.join(', ')}]`);
 }, { required: true });
 
 test('11.3 proxy stop terminates all child processes', async (_client, _fixture, log, args) => {
