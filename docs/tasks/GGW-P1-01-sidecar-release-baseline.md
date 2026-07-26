@@ -2,8 +2,9 @@
 
 ## 元数据
 
-- State: `READY_FOR_REVIEW`
+- State: `CHANGES_REQUIRED`
 - Implementation HEAD: `4d9542246c89dda336555d7416a4641c13d11419`
+- Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-02、P1-03
