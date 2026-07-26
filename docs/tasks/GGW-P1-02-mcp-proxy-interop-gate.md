@@ -2,7 +2,8 @@
 
 ## 元数据
 
-- State: `IMPLEMENTING`
+- State: `READY_FOR_REVIEW`
+- Implementation HEAD: `cbfdee98b47d8ec6cf9601a77231d4e5a9eb9d39`
 - Default executor: Claude Code
 - Depends on: 无
 - Parallel with: P1-01、P1-03
