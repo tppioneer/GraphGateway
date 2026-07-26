@@ -190,6 +190,25 @@ function findDescendantPids(parentPid, depth) {
   return [...new Set(all)];
 }
 
+/** Find the PID of the process listening on a TCP port. */
+function getPidByPort(port) {
+  if (platform !== 'win32') {
+    const r = shCapture(['lsof', '-ti', `:${port}`]);
+    if (r.exitCode === 0 && r.stdout.trim()) return parseInt(r.stdout.trim(), 10);
+    return 0;
+  }
+  const out = sh(['cmd', '/c', `netstat -ano | findstr :${port}`]);
+  if (!out || out.includes('ERROR')) return 0;
+  for (const line of out.split('\n')) {
+    if (line.includes('LISTENING')) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(pid) && pid > 0) return pid;
+    }
+  }
+  return 0;
+}
+
 // ── temp directory for fixture runtime (P102-R4) ─────────────────────────────
 async function createTempFixture(fixturePath, log) {
   const tmpBase = join(tmpdir(), `ggw-p1-02-${Date.now()}`);
@@ -913,33 +932,44 @@ test('11.2 proxy start creates new child processes', async (_client, _fixture, l
     return FAIL(`second proxy start failed: ${e.message}`);
   }
 
-  await sleep(2000);
+  await sleep(3000);
 
-  // Find direct child processes of the proxy PID
-  const childPids = findDescendantPids(pm2.proxyPid);
-  log(`    proxy PID ${pm2.proxyPid}, descendants: [${childPids.join(', ') || 'none'}]`);
+  // Find the actual mcp-proxy PID via its listening port (netstat)
+  const actualProxyPid = getPidByPort(port2);
+  log(`    spawn PID: ${pm2.proxyPid}, listening PID: ${actualProxyPid || 'unknown'}`);
 
-  // Also detect all new PIDs system-wide (broader coverage)
-  const currentPids = getAllPids();
-  const baseline = args._baselinePids || [];
-  const allNewPids = currentPids.filter(p => !baseline.includes(p));
-  log(`    all new PIDs: ${allNewPids.length}`);
+  // Find descendants of the actual proxy process (mcp-proxy -> gitnexus)
+  let childPids = [];
+  if (actualProxyPid > 0) {
+    childPids = findDescendantPids(actualProxyPid);
+  }
+  // Also try via the spawn PID (may be cmd.exe wrapper)
+  const spawnDescendants = findDescendantPids(pm2.proxyPid);
+  const allDescendants = [...new Set([...childPids, ...spawnDescendants])];
+  log(`    combined descendants: [${allDescendants.join(', ') || 'none'}]`);
 
-  // Track PIDs: prefer direct children for strong association; fall back to all new PIDs
-  const trackedPids = childPids.length > 0 ? childPids : allNewPids.slice(0, 10);
-
-  if (trackedPids.length === 0) {
-    await pm2.stop(log);
-    return FAIL('no new child processes detected after proxy start — proxy may not have spawned upstream');
+  if (allDescendants.length === 0) {
+    // Fallback: use system-wide new PIDs (weaker association)
+    const currentPids = getAllPids();
+    const baseline = args._baselinePids || [];
+    const allNewPids = currentPids.filter(p => !baseline.includes(p));
+    log(`    fallback: all new PIDs: ${allNewPids.length}`);
+    if (allNewPids.length === 0) {
+      await pm2.stop(log);
+      return FAIL('no new child processes detected after proxy start — proxy may not have spawned upstream');
+    }
+    childPids = allNewPids.slice(0, 8);
+  } else {
+    childPids = allDescendants;
   }
 
-  if (!pidExists(pm2.proxyPid)) {
+  if (!pidExists(pm2.proxyPid) && !(actualProxyPid > 0 && pidExists(actualProxyPid))) {
     await pm2.stop(log);
-    return FAIL(`proxy PID ${pm2.proxyPid} is not alive`);
+    return FAIL(`neither spawn PID ${pm2.proxyPid} nor listening PID ${actualProxyPid} is alive`);
   }
 
   // Verify tracked PIDs exist
-  for (const p of trackedPids) {
+  for (const p of childPids) {
     if (!pidExists(p)) {
       log(`    WARNING: tracked PID ${p} may have exited immediately`);
     }
@@ -956,10 +986,11 @@ test('11.2 proxy start creates new child processes', async (_client, _fixture, l
   }
 
   args._trackedProxyPid = pm2.proxyPid;
-  args._trackedPids = trackedPids;
+  args._trackedProxyRealPid = actualProxyPid;
+  args._trackedPids = childPids;
   args._trackedPm2 = pm2;
 
-  return PASS(`proxy PID ${pm2.proxyPid}, descendants: ${childPids.length}, all new PIDs: ${allNewPids.length}. Tracked: [${trackedPids.join(', ')}]`);
+  return PASS(`proxy spawn PID ${pm2.proxyPid}, listening PID ${actualProxyPid}, tracked ${childPids.length} descendants: [${childPids.join(', ')}]`);
 }, { required: true });
 
 test('11.3 proxy stop terminates all child processes', async (_client, _fixture, log, args) => {
@@ -984,9 +1015,9 @@ test('11.3 proxy stop terminates all child processes', async (_client, _fixture,
     }
   }
 
-  if (pidExists(args._trackedProxyPid)) {
+  if (pidExists(args._trackedProxyPid) || (args._trackedProxyRealPid && pidExists(args._trackedProxyRealPid))) {
     survivors.push(args._trackedProxyPid);
-    log(`    proxy PID ${args._trackedProxyPid} STILL ALIVE`);
+    log(`    proxy PID ${args._trackedProxyPid}${args._trackedProxyRealPid ? ' / ' + args._trackedProxyRealPid : ''} STILL ALIVE`);
   }
 
   args._trackedPm2 = null;
