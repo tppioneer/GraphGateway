@@ -75,77 +75,96 @@
 
 ## GGW-P1-02
 
-- Head: `cbfdee98b47d8ec6cf9601a77231d4e5a9eb9d39`
+- Head: `8300780b505e5e9e68fcd5acdb09785634acdd7a`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-02`
 - Verdict: `CHANGES_REQUIRED`
 
 ### P102-R1 — High / High confidence
 
-- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:319-336`
-- Evidence: runner 默认每项为 `PASS`，只有 callback 抛异常才失败。返回
-  `SKIP`、`constraint` 或未证明目标行为的文本仍计为 PASS。报告因此把
-  `unknown tool` 未报错和请求在 abort 前完成都计入 28/28 PASS。
+- Status: OPEN after remediation
+  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:88-110`,
+  `:230-270`, `:606-632`
+- Evidence: 结果模型虽已改为 `PASS|FAIL|SKIP|CONSTRAINT`，但必需前置命令仍通过
+  吞掉异常的 `sh()` 执行。独立运行中 `git commit` 因 shell 将提交消息拆成
+  pathspec 而失败，runner 只记录 note，继续索引并把固定仓库 tests 4.1-4.5
+  全部记为 PASS。`gitnexus analyze` 同样使用 `sh()`，非零退出不会进入
+  `catch`；repo 无法精确解析时又退回 basename。query/context 失败后还会改为
+  不带 repo 的全局查询或仅凭 `file_path` 查询，并继续返回 PASS。
 - Violated item: verdict 和每个结论必须可追溯到真实协议证据；失败时应返回非零。
-- Expected: 建模 `PASS|FAIL|SKIP|CONSTRAINT`，每项断言目标行为；必需验收项为
-  SKIP/CONSTRAINT 时总体不得成为 PASS，且进程退出码反映门禁失败。
+- Expected: 所有 fixture 初始化、Git 提交和 GitNexus analyze 命令必须
+  fail-fast；精确确认临时 fixture 的 canonical identity 后才运行协议门禁。
+  query/context 必须始终绑定并断言该 identity，不允许无 repo/global fallback。
 
 ### P102-R2 — High / High confidence
 
-- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:495-570`
-- Evidence: 没有注入 GitNexus 上游异常，也没有断开一个已初始化客户端并验证
-  Session/子进程回收。所谓 timeout 测试调用快速 `tools/list`；实际报告明确写着
-  “request completed before abort”，没有发生 timeout/cancellation。
+- Status: OPEN after remediation
+  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:741-808`,
+  `tests/fixtures/mcp/controllable-server.mjs:139-146`
+- Evidence: 可控 fixture 已能制造 delay/crash/disconnect，且上游 crash 场景已
+  实际执行；但 cancellation test 只断言本地 `fetch` 在 500 ms 收到
+  `AbortError`，随后立即强制终止整个 proxy，没有证明延迟中的上游请求被取消、
+  对应 Session 被回收或同一 proxy 的其他 Session 不受影响。fixture 的
+  `disconnect` tool 没有被任何测试调用，因此“客户端断开和 Session 清理”仍无
+  端到端证据。
 - Violated item: 必须验证并记录上游异常、超时和客户端断开。
-- Expected: 使用可控 fixture MCP 子进程实现延迟、崩溃和断线场景，分别断言
-  HTTP/MCP 错误、超时/取消、Session 清理以及其他会话不受影响。
+- Expected: abort/disconnect 后保持 proxy 运行，分别观察并断言上游请求终止、
+  被断开 Session 的后续行为、相关子进程回收，以及 sibling Session 的可用性；
+  将 fixture 的 disconnect 场景纳入必需门禁。
 
 ### P102-R3 — High / High confidence
 
-- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:574-603`,
-  `:715-770`
-- Evidence: cleanup 测试在第二个 proxy 启动失败时也继续；只比较名为
-  `gitnexus.exe` 的进程数量，实际证据为 `0 -> 0`。它没有证明被测 GitNexus
-  子进程曾存在、属于哪个 Session 或在 proxy 退出后消失。报告仍断言
-  “每 Session 一个子进程”以及 stdout/stderr 正确隔离，但没有对应测量。
+- Status: OPEN after remediation
+  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:941-1045`,
+  `:1133-1282`, `:1345-1383`;
+  `docs/compatibility/mcp-proxy-gitnexus-interop-report.md:33,155,200`
+- Evidence: 独立运行中 descendant 查询实际返回空，runner 转而把全系统 13 个
+  新 PID 的前 8 个当作子进程；其中多个在关联验证前已退出，11.2 仍为 PASS，
+  随后这些任意 PID 恰好消失又使 11.3 PASS。报告在 cleanup 前生成；最终 cleanup
+  警告仍有 6 个新 PID，却不进入测试结果或 verdict。报告还同时断言“每 Session
+  一个独立 GitNexus 子进程”和“共享 upstream 导致 sibling Session 失败”，
+  会话/进程模型自相矛盾。stdout/stderr 测试也只比较两个 buffer 的字节数，
+  未验证 stdout 只含协议消息或 stderr 日志不污染协议通道。
 - Violated item: 明确会话/进程映射、proxy 退出后的子进程行为，且结论来自证据。
-- Expected: 记录被测 proxy 和各 Session 对应的实际子进程 PID/启动标记，先证明
-  存在再证明退出；启动失败必须 FAIL。捕获 stdout/stderr 并对通道隔离做断言。
+- Expected: 使用可靠的 parent/child 或 Job Object 关联证明每个被测 PID 的归属；
+  无法建立关联时 FAIL，不得使用全系统 PID 差值替代。把所有 cleanup 结果纳入
+  report/verdict 后再写报告，并由测量结果生成唯一一致的会话/进程模型结论；
+  对 stdout 协议帧和 stderr 日志内容分别做断言。
 
 ### P102-R4 — Medium / High confidence
 
-- Location: `.gitignore:63-69`,
-  `docs/tasks/GGW-P1-02-mcp-proxy-interop-gate.md:39-45`
-- Evidence: Implementation HEAD 在仓库根 `.gitignore` 增加了 fixture Git、
-  GitNexus 与代理元数据规则；任务卡允许范围只包含 `scripts/interop/`、
-  `tests/fixtures/mcp/`、`docs/compatibility/` 及任务所需的开发依赖锁文件，
-  未授权修改根目录 `.gitignore`。
-- Violated item: 交付必须遵守任务卡的 Allowed scope；仓库级忽略规则属于范围外
-  变更，且会影响其他任务和开发者看到的工作树状态。
-- Expected: 从整改提交移除根目录 `.gitignore` 变更；若 fixture 会产生运行时
-  文件，应由互操作脚本在受控临时目录内创建并清理，或先通过任务卡变更显式扩大
-  允许范围后再修改仓库级规则。
+- Status: RESOLVED at
+  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
+- Location: `.gitignore:59-63`,
+  `scripts/interop/verify-mcp-proxy-gitnexus.mjs:212-280`
+- Closure evidence: 累计整改差异只从根 `.gitignore` 删除原先越界的 fixture
+  规则，没有新增仓库级规则；runner 将 fixture 源文件复制到 OS 临时目录，
+  排除 `.git`、`.gitnexus`、`.claude`，运行结束后删除该临时目录。
 
 ### P102-R5 — Medium / High confidence
 
+- Status: RESOLVED at
+  `8300780b505e5e9e68fcd5acdb09785634acdd7a`
 - Location: `docs/compatibility/mcp-proxy-gitnexus-interop-report.md:6,35`
-- Evidence: 报告的 `Commit` 写成任务基线
-  `87afdaeb7c5579facb93edf15f786011ebb3c4ca`，而被审实现 HEAD 为
-  `cbfdee98b47d8ec6cf9601a77231d4e5a9eb9d39`，无法追溯报告实际测试的实现；
-  “测试仓库”还包含
-  `F:\develop\worktrees\GraphGateway-p1-02\tests\fixtures\mcp\sample-repo`
-  这一审查者本机绝对路径。
-- Violated item: 兼容性结论必须来自可复现、已脱敏且可追溯到被测版本的证据。
-- Expected: 在已提交的实现版本上重新运行门禁，报告明确记录实际被测 commit；
-  路径使用仓库相对路径（如 `tests/fixtures/mcp/sample-repo`）或稳定占位符，
-  不得写入开发者机器的绝对路径。
+- Closure evidence: 报告提交位于被测代码提交
+  `16eb2d1131511816d8a81f3d35eb808d61f333a5` 之后，`Tested commit`
+  精确记录该代码提交；fixture 使用仓库相对路径
+  `tests\fixtures\mcp\sample-repo`，报告和互操作目录扫描未发现本机绝对路径。
 
 ### Verification evidence
 
 - `node --check scripts/interop/verify-mcp-proxy-gitnexus.mjs`: PASS
 - `node ... --help`: PASS
-- 执行器报告真实链路运行退出码为 0、报告为 `PASS_WITH_CONSTRAINTS`
+- `node --version`: PASS，`v24.14.1`
+- `mcp-proxy --version`: PASS，`6.5.4`
+- `gitnexus --version`: PASS，`1.6.9`
+- 独立完整运行：31 PASS、0 FAIL、0 SKIP、4 CONSTRAINT，
+  `PASS_WITH_CONSTRAINTS`；但实际同时出现 fixture commit 失败、无可靠 descendant
+  关联和 cleanup 后 6 个新 PID 告警，均未反映到报告 verdict
 - generation 能力缺失证据可信：P1-08 保持 BLOCKED
-- 由于 runner 和必需场景存在上述缺陷，28/28 PASS 不能作为验收证据
+- P102-R4、P102-R5 关闭；P102-R1、P102-R2、P102-R3 继续保持 OPEN
 
 ## GGW-P1-03
 
@@ -211,7 +230,7 @@
 | Task | Verdict | Open findings |
 | --- | --- | --- |
 | GGW-P1-01 | `CHANGES_REQUIRED` | P101-R1、P101-R3 |
-| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4、P102-R5 |
+| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3 |
 | GGW-P1-03 | `PASS` | 无 |
 
 GGW-P1-03 已集成到 `mcp`；GGW-P1-01 与 GGW-P1-02 仍为
