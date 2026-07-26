@@ -128,52 +128,62 @@
 
 ## GGW-P1-03
 
-- Head: `c5e3813aeeb7558b3c4f0ddd83f9cb07a8763ae6`
+- Head: `247c87d5e4325b3909cbd0eab278109a8707aa43`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-03`
 - Verdict: `CHANGES_REQUIRED`
 
 ### P103-R1 — High / High confidence
 
-- Location: `crates/graphgateway-types/src/view.rs:17-60`
-- Evidence: `ResolvedGraphView.members`、`ViewMember.generation_id` 等字段全部公开，
-  调用方可在创建后直接替换成员或 generation。ViewMember 也没有 endpoint 或
-  capability snapshot，因此无法表达任务要求的不可变
-  `Source + generation -> endpoint/capability` 绑定。
-- Violated item: ResolvedGraphView 创建后不能原地改变 generation 或 endpoint。
-- Expected: 通过私有字段和受校验构造器建立不可变视图，仅提供只读 accessor；
-  member 包含已解析 endpoint 与同 generation 的 capability snapshot。添加
-  compile-fail/API 测试或等价证据证明调用方不能原地修改。
+- Status: OPEN after remediation round 1
+- Location: `crates/graphgateway-types/src/view.rs:58-85`,
+  `crates/graphgateway-core/src/validation.rs:313-336`
+- Evidence: 字段私有化、只读 accessor 和 compile-fail 证据已经完成，但
+  `ViewMember::new` 接受任意 `CapabilitySnapshot`，没有校验
+  `capability.source_id == source_id`；`validate_view_member` 对反序列化对象也没有
+  检查该关系，因此仍可把其他 Source 的能力快照绑定到当前成员。
+- Violated item: immutable
+  `Source + generation -> endpoint/capability` 绑定必须在构造和边界校验中成立。
+- Expected: 构造器拒绝 capability Source 身份不匹配，核心校验同时覆盖
+  反序列化输入，并添加构造器与反序列化负向测试；保留现有不可变 API。
 
 ### P103-R2 — High / High confidence
 
+- Status: RESOLVED at
+  `247c87d5e4325b3909cbd0eab278109a8707aa43`
 - Location: `crates/graphgateway-types/src/source.rs:123-126`,
   `crates/graphgateway-core/src/validation.rs:93-115`
-- Evidence: loopback 校验使用字符串 `contains`。例如
-  `https://example.invalid/?localhost` 或
-  `http://127.0.0.1.example.invalid/mcp` 会被 Local Source 接受。
-  `SourceKind::Unknown` 还会完全跳过 loopback/TLS 校验。
-- Violated item: 校验必须拒绝非法本地/远程配置；本地 endpoint 不得逃逸 loopback。
-- Expected: 使用 URL parser 解析 scheme/host/port，按 IP/hostname 精确判断
-  loopback；Unknown 必须 fail closed，至少按 remote TLS/read-only 处理。
+- Closure evidence: endpoint 通过 `url::Url` 解析并按 host 类型精确识别 IPv4、
+  IPv6 和 `localhost`；查询串、路径与 hostname 后缀绕过测试均通过，
+  `SourceKind::Unknown` fail closed。
 
 ### P103-R3 — High / High confidence
 
+- Status: RESOLVED at
+  `247c87d5e4325b3909cbd0eab278109a8707aa43`
 - Location: `crates/graphgateway-core/src/validation.rs:118-125`,
   `:143-177`
-- Evidence: writable 校验只要求 `location == Local`，没有要求 SourceRole::Primary，
-  也没有要求 writable Source 等于 Workspace.primary_source_id。因此任意 local
-  baseline/dependency/member 都可设置 `writable=true` 并通过验证。
-- Violated item: 写操作只能指向 Workspace 的 local primary Source。
-- Expected: Workspace 级校验保证最多一个 writable Source，且它必须同时是
-  local、role=Primary、source_id=primary_source_id；AllReadOnly 等 write policy
-  必须禁止 writable Source，并添加拒绝测试。
+- Closure evidence: 单 Source 与 Workspace 两级校验已要求 writable Source
+  同时满足 local、Primary、唯一且等于 `primary_source_id`；`AllReadOnly`
+  禁止 writable Source，相关接受和拒绝测试通过。
+
+### P103-R4 — Medium / High confidence
+
+- Status: OPEN
+- Location: `crates/graphgateway-types/src/view.rs:58-85,429-454`
+- Evidence: `ViewMember::new` 无条件设置 `unavailable=false`，没有正常类型 API
+  构造不可用成员；`is_degraded_true` 测试明确通过 JSON 反序列化绕过受校验构造器。
+- Violated item: 设计允许部分成员不可用，但响应必须标记降级和缺失成员；领域类型
+  必须能在不破坏不可变性的前提下表达该状态。
+- Expected: 增加显式、不可变且受校验的不可用成员构造路径，保持现有
+  `unavailable` JSON 布尔格式，并用公共类型 API 测试 degraded view。
 
 ### Verification evidence
 
 - `cargo fmt --all -- --check`: PASS
 - `cargo clippy -p graphgateway-types -p graphgateway-core --all-targets --all-features -- -D warnings`: PASS
-- `cargo test -p graphgateway-types -p graphgateway-core --all-features`: PASS，83 tests
-- 测试通过但没有覆盖上述不变量，且 P103-R1 可由公开 API 直接复现
+- `cargo test -p graphgateway-types -p graphgateway-core --all-features`: PASS，
+  50 core + 73 types + 1 组 trybuild（5 cases）
+- P103-R2、P103-R3 已关闭；P103-R1、P103-R4 进入第二轮整改
 
 ## Wave A summary
 
@@ -181,7 +191,7 @@
 | --- | --- | --- |
 | GGW-P1-01 | `CHANGES_REQUIRED` | P101-R1、P101-R2、P101-R3 |
 | GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4、P102-R5 |
-| GGW-P1-03 | `CHANGES_REQUIRED` | P103-R1、P103-R2、P103-R3 |
+| GGW-P1-03 | `CHANGES_REQUIRED` | P103-R1、P103-R4 |
 
 三项均未达到 `VERIFIED`，不得集成到 `mcp`。后续整改必须基于各自当前完整
 Implementation HEAD，保留以上 finding ID，并限制为原任务范围内的一轮修复。
