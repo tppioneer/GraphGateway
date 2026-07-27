@@ -117,19 +117,26 @@
 - Head: `1d180f442115e2d47361e905785531bf2c92f141`
 - Tested code commit: `414632dacc819d4c9c36fc863a3c608cec8fffd5`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-02`
-- Review status: `READY_FOR_REVIEW`
-- Last verdict: `CHANGES_REQUIRED`（round 2）
+- Review status: `PASS`（2026-07-28 round 3 独立复审通过，可集成）
+- Last verdict: `PASS`（round 3 独立复审 2026-07-28）
 - Remediation round 3: AUTHORIZED on 2026-07-27；executor Claude Code，
   model `glm-5.2`，base
   `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
 - Remediation round 3 delivery: code
   `414632dacc819d4c9c36fc863a3c608cec8fffd5`，clean-gate report
-  `1d180f442115e2d47361e905785531bf2c92f141`；等待独立复审
+  `1d180f442115e2d47361e905785531bf2c92f141`；2026-07-28 独立复审通过
 
 ### P102-R1 — High / High confidence
 
-- Status: OPEN after remediation round 2
-  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Status: RESOLVED at `1d180f442115e2d47361e905785531bf2c92f141`（2026-07-28
+  round 3 独立复审）
+- Closure evidence (2026-07-28): basename/substring 回退
+  （`lineIncludesPath`/`basenameLower`/`pathCandidates`）已完全删除，改为
+  `parseGitNexusList` + `matchReposByCanonicalPath`，仅做规范化完整路径 `===`
+  精确匹配；零匹配与多匹配均 `FATAL` 退出 1。fixture init/git commit/
+  gitnexus analyze 全部 fail-fast。query(4.3)/context(4.4) 始终绑定
+  `repo=fixture.repoName` 且断言非空；fixture 含真实 `greet` 符号并返回非空结果。
+  grep 确认无 basename 回退残留。
 - Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:281-411`,
   `:749-765`
 - Evidence: fixture 初始化、Git 提交、GitNexus analyze 以及 query/context
@@ -145,8 +152,16 @@
 
 ### P102-R2 — High / High confidence
 
-- Status: OPEN after remediation round 2
-  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Status: RESOLVED at `1d180f442115e2d47361e905785531bf2c92f141`（2026-07-28
+  round 3 独立复审）
+- Closure evidence (2026-07-28): abort 后保持 proxy 运行并等待 `DELAY_MS+1000`
+  （6s/5s delay）；通过 controllable fixture 的 `delay_status` 工具如实记录上游
+  请求最终状态（completed/cancelled/unknown，fixture 用 setTimeout 真实追踪）。
+  记录 upstream PID（存活/变更）、original session、sibling session 行为。
+  `sessionAlive=false` 或 `siblingAlive=false` 返回 CONSTRAINT，绝不返回 PASS；
+  上游继续完成返回 CONSTRAINT（非 FAIL）；取消才 PASS；unknown 为 CONSTRAINT。
+  独立复跑 8.2=CONSTRAINT（upstream state=completed，sessions alive=true），
+  不再像 round 2 那样返回 PASS。
 - Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:875-962`,
   `:1001-1063`
 - Evidence: disconnect 已进入必需门禁并记录共享上游约束；但 abort 测试仍只证明
@@ -164,8 +179,15 @@
 
 ### P102-R3 — High / High confidence
 
-- Status: OPEN after remediation round 2
-  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Status: RESOLVED at `1d180f442115e2d47361e905785531bf2c92f141`（2026-07-28
+  round 3 独立复审）
+- Closure evidence (2026-07-28): (1) 11.2 MCP 功能所有权检查失败现抛错并返回
+  FAIL（round 2 仅写日志）。(2) `getAllPids()` 全系统函数已删除；`findChildPids`
+  /`findDescendantPids` 仅用 parent/child（WMI ParentProcessId / pgrep -P）；
+  无法建立归属时（11.2/13.1）返回 FAIL，无全系统 PID 差值回退。(3) 所有清理
+  结果（13.2 fallback main、13.3 fallback secondary、13.4 temp fixture）在
+  `generateReport` 之前 push 进 results；`cleanupTempFixture` 返回 FAIL（非仅
+  warning）。独立复跑 11.x/13.x 全 PASS，0 FAIL。
 - Location: `scripts/interop/verify-mcp-proxy-gitnexus.mjs:1283-1299`,
   `:1774-1782`
 - Evidence: 全系统 PID 差值回退已删除，本轮独立运行可确定性追踪并回收两个
@@ -183,8 +205,12 @@
 
 ### P102-R4 — Medium / High confidence
 
-- Status: REOPENED after remediation round 2
-  `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
+- Status: RESOLVED at `1d180f442115e2d47361e905785531bf2c92f141`（2026-07-28
+  round 3 独立复审）
+- Closure evidence (2026-07-28): `git diff 87afdaeb..1d180f4 -- .gitignore`
+  为空；根 `.gitignore` blob 哈希在基线与 HEAD 完全一致
+  （`a579c11ea191c8e4cd929e39a55bd54d93cd50b0`）。累计差异仅触及 Allowed scope
+  内 6 个文件（scripts/interop、tests/fixtures/mcp、docs/compatibility）。
 - Location: `.gitignore:59`,
   `scripts/interop/verify-mcp-proxy-gitnexus.mjs:212-280`
 - Evidence: runner 已改用 OS 临时 fixture，原 fixture ignore 规则也已删除；
@@ -285,12 +311,15 @@
 | Task | Verdict | Open findings |
 | --- | --- | --- |
 | GGW-P1-01 | `INTEGRATED` | 无（P101-R4 方案 C 关闭） |
-| GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4 |
+| GGW-P1-02 | `PASS` | 无（P102-R1/R2/R3/R4 于 2026-07-28 round 3 独立复审关闭） |
 | GGW-P1-03 | `PASS` | 无 |
 
 GGW-P1-03 已集成到 `mcp`。GGW-P1-01 经方案 C（控制器调整任务卡验证命令顺序，
 commit `3f22b7a`）关闭 P101-R4，2026-07-28 控制器独立验证全部 PASS，已合并到
 `mcp`（merge commit `d265d6f`），集成后 `cargo test --workspace --all-features`
-重新确认 PASS，状态 `INTEGRATED`。GGW-P1-02 仍为 `CHANGES_REQUIRED`，不得集成。
-GGW-P1-02 原两轮整改预算已用尽；用户于 2026-07-27 显式批准第三轮例外，
-仅允许处理 P102-R1/P102-R2/P102-R3/P102-R4，完成后必须重新独立复审。
+重新确认 PASS，状态 `INTEGRATED`。GGW-P1-02 经 2026-07-28 round 3 独立复审：P102-R1/R2/R3/R4 全部 RESOLVED，
+P102-R5 维持 RESOLVED，未发现新增 finding，可集成。
+独立复审方法：代码逐一审查 + round2->round3 差异确认 + 累计差异范围核验 +
+独立完整复跑（node v24.14.1 / mcp-proxy 6.5.4 / gitnexus 1.6.9，38 tests：
+32 PASS、0 FAIL、0 SKIP、6 CONSTRAINT，结论 PASS_WITH_CONSTRAINTS，退出码 1）。
+报告 Tested commit 精确为 `414632dacc819d4c9c36fc863a3c608cec8fffd5`，无绝对路径。
