@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "test:sidecar-build": "node scripts/test-build-sidecar.mjs && node scripts/test-copy-sidecar.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

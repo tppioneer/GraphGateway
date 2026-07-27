@@ -725,33 +725,52 @@ fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + 
     let target_triple = build_target_triple();
     let sidecar_name = format!("graphgateway-{target_triple}.exe");
 
+    // Collect the candidate paths we check for richer error reporting.
+    let mut candidates: Vec<String> = Vec::new();
+
     // 1. Check relative to the current executable (production layout).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            // Production: sidecar next to the desktop EXE
-            let prod = dir.join("graphgateway.exe");
-            if prod.exists() {
-                tracing::debug!(path = %prod.display(), "found sidecar next to exe");
-                return Ok(prod);
-            }
-            // Alternative: sidecar in a 'binaries' subdirectory
-            let prod_bin = dir.join("binaries").join(&sidecar_name);
-            if prod_bin.exists() {
-                tracing::debug!(path = %prod_bin.display(), "found sidecar in binaries dir");
-                return Ok(prod_bin);
-            }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+    if let Some(ref dir) = exe_dir {
+        // Production: sidecar next to the desktop EXE
+        let prod = dir.join("graphgateway.exe");
+        candidates.push(prod.display().to_string());
+        if prod.exists() {
+            tracing::debug!(path = %prod.display(), "found sidecar next to exe");
+            return Ok(prod);
         }
+        // Alternative: sidecar in a 'binaries' subdirectory
+        let prod_bin = dir.join("binaries").join(&sidecar_name);
+        candidates.push(prod_bin.display().to_string());
+        if prod_bin.exists() {
+            tracing::debug!(path = %prod_bin.display(), "found sidecar in binaries dir");
+            return Ok(prod_bin);
+        }
+    } else {
+        candidates.push("<could not determine executable directory>".into());
+        candidates.push("<same>".into());
     }
 
     // 2. Check Tauri externalBin dev layout (binaries/ relative to src-tauri).
     // In Tauri dev mode, the current directory is typically the src-tauri dir.
+    let cwd = std::env::current_dir().ok();
     let dev_path = PathBuf::from("binaries").join(&sidecar_name);
+    candidates.push(format!(
+        "{} (relative to {})",
+        dev_path.display(),
+        cwd.as_ref()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "?".into())
+    ));
     if dev_path.exists() {
         tracing::debug!(path = %dev_path.display(), "found sidecar in dev binaries");
         return Ok(dev_path);
     }
 
     let dev_simple = PathBuf::from("binaries").join("graphgateway.exe");
+    candidates.push(dev_simple.display().to_string());
     if dev_simple.exists() {
         tracing::debug!(path = %dev_simple.display(), "found sidecar (simple name) in dev binaries");
         return Ok(dev_simple);
@@ -759,31 +778,49 @@ fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + 
 
     // 3. Workspace target/debug fallback (for development convenience).
     let workspace_target = PathBuf::from("../../target/debug/graphgateway.exe");
+    candidates.push(workspace_target.display().to_string());
     if workspace_target.exists() {
         tracing::debug!(path = %workspace_target.display(), "found sidecar in workspace target");
         return Ok(workspace_target.canonicalize().unwrap_or(workspace_target));
     }
 
-    Err(format!(
-        "sidecar binary not found (triple: {target_triple}).\n\
-         Looked in:\n\
-         - next to the desktop executable\n\
-         - binaries/graphgateway-{target_triple}.exe\n\
-         - binaries/graphgateway.exe\n\
-         - ../../target/debug/graphgateway.exe\n\
-         \n\
-         Build: cargo build -p graphgateway-server\n\
-         Copy: copy target\\debug\\graphgateway.exe apps\\graphgateway-desktop\\src-tauri\\binaries\\graphgateway-{target_triple}.exe"
-    ).into())
+    let mut msg = format!(
+        "sidecar binary not found (target triple: {target_triple}).\n\
+         Expected binary name: {sidecar_name}\n\
+         Searched locations:\n"
+    );
+    for (i, c) in candidates.iter().enumerate() {
+        msg.push_str(&format!("  {}. {c}\n", i + 1));
+    }
+    msg.push_str(&format!(
+        "\n\
+         Resolve this with one of:\n\
+         - Release build:  cargo tauri build       (auto-builds sidecar via beforeBuildCommand)\n\
+         - Manual release: npm run build:sidecar   (builds sidecar & copies to binaries/)\n\
+         - Dev build:      cargo build -p graphgateway-server  (then use cargo tauri dev)\n\
+         - Manual copy:    copy target\\debug\\graphgateway.exe apps\\graphgateway-desktop\\src-tauri\\binaries\\graphgateway-{target_triple}.exe",
+    ));
+
+    Err(msg.into())
 }
 
-fn build_target_triple() -> &'static str {
+/// Return the effective target triple for sidecar binary resolution.
+///
+/// Priority order:
+///   1. `CARGO_BUILD_TARGET` env var (set explicitly at build/run time)
+///   2. `cfg!` compile-time target (reflects the Rust toolchain target)
+fn build_target_triple() -> String {
+    if let Ok(t) = std::env::var("CARGO_BUILD_TARGET") {
+        if !t.is_empty() {
+            return t;
+        }
+    }
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "x86_64-pc-windows-msvc"
+        "x86_64-pc-windows-msvc".into()
     } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
-        "aarch64-pc-windows-msvc"
+        "aarch64-pc-windows-msvc".into()
     } else {
-        "x86_64-pc-windows-msvc"
+        "x86_64-pc-windows-msvc".into()
     }
 }
 
@@ -793,5 +830,56 @@ fn get_data_dir() -> String {
     } else {
         let tmp = std::env::temp_dir();
         tmp.join("graphgateway-data").to_string_lossy().to_string()
+    }
+}
+
+#[cfg(test)]
+mod target_triple_tests {
+    use super::build_target_triple;
+
+    #[test]
+    fn returns_cfg_target_by_default() {
+        let triple = build_target_triple();
+        // On Windows this will end with -pc-windows-msvc.
+        assert!(triple.ends_with("-pc-windows-msvc"));
+        assert!(!triple.is_empty());
+    }
+
+    #[test]
+    fn honors_cargo_build_target_env() {
+        let custom = "aarch64-pc-windows-msvc";
+        std::env::set_var("CARGO_BUILD_TARGET", custom);
+        let triple = build_target_triple();
+        assert_eq!(triple, custom);
+        std::env::remove_var("CARGO_BUILD_TARGET");
+    }
+
+    #[test]
+    fn empty_cargo_build_target_falls_back() {
+        std::env::set_var("CARGO_BUILD_TARGET", "");
+        let triple = build_target_triple();
+        // Should fall back to cfg!
+        assert!(triple.ends_with("-pc-windows-msvc"));
+        std::env::remove_var("CARGO_BUILD_TARGET");
+    }
+
+    #[test]
+    fn multiple_targets_consistent_format() {
+        // Verify that known Windows targets follow the expected naming.
+        let triples = [
+            "x86_64-pc-windows-msvc",
+            "aarch64-pc-windows-msvc",
+            "i686-pc-windows-msvc",
+            "x86_64-pc-windows-gnu",
+        ];
+        for t in &triples {
+            assert!(
+                t.contains("windows"),
+                "triple should contain 'windows': {t}"
+            );
+            let sidecar = format!("graphgateway-{t}.exe");
+            assert!(sidecar.ends_with(".exe"));
+            assert!(sidecar.starts_with("graphgateway-"));
+        }
     }
 }
