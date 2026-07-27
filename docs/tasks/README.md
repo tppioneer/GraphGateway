@@ -42,6 +42,7 @@ flowchart LR
   T10["P1-10 北向 MCP"]
   T11["P1-11 Generation 蓝绿切换"]
   T12["P1-12 Tauri 管理页面"]
+  T13["P1-13 Windows 桌面应用图标"]
 
   T03 --> T04
   T02 --> T05
@@ -59,6 +60,7 @@ flowchart LR
   T07 --> T11
   T08 --> T11
   T06 --> T12
+  T01 --> T13
 ```
 
 `P1-01` 是发布工程的独立支线，不阻塞路由内核，但在 Windows 交付验收前必须
@@ -73,7 +75,7 @@ flowchart LR
 | A | P1-01、P1-02、P1-03 | 任务卡已提交并写入准确 Expected HEAD |
 | B | P1-04、P1-05 | P1-03 已集成；P1-05 还要求 P1-02 已通过 |
 | C | P1-06、P1-07 | P1-04 已集成；P1-07 还要求 P1-05 已集成 |
-| D | P1-08、P1-12 | 各自依赖已集成；两者可并行 |
+| D | P1-08、P1-12、P1-13 | 各自依赖已集成；三者可并行 |
 | E | P1-09、P1-11 | P1-08 已集成；两者可并行 |
 | F | P1-10 | P1-05、P1-06、P1-09 已集成 |
 
@@ -93,6 +95,7 @@ flowchart LR
 | P1-10 | `GGW-P1-10-northbound-mcp.md` | 北向 Streamable HTTP MCP 单源垂直链路 |
 | P1-11 | `GGW-P1-11-generation-blue-green.md` | generation 蓝绿切换和安全回收 |
 | P1-12 | `GGW-P1-12-tauri-management-pages.md` | Tauri Workspace/Source 管理页面 |
+| P1-13 | `GGW-P1-13-desktop-icon.md` | Windows 桌面图标设计、深浅色适配与 Tauri 接入 |
 
 ## 本阶段明确不做
 
@@ -102,4 +105,3 @@ flowchart LR
 - 绕过标准 MCP 调用 mcp-proxy 私有控制接口
 - 自动发现任意仓库、云端账号体系、远程多租户和公网暴露
 - 在没有能力证据时承诺 GitNexus generation/写工具语义
-
