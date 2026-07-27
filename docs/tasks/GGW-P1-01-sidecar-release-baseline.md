@@ -2,14 +2,14 @@
 
 ## 元数据
 
-- State: `CHANGES_REQUIRED`
+- State: `VERIFIED`
 - Implementation HEAD: `9eeec40c7bf53c66f75f9e730c5f54286b3a9b5b`
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
-- Open findings: `P101-R4`
-- Closed findings: `P101-R1`、`P101-R2`、`P101-R3`
+- Open findings: 无
+- Closed findings: `P101-R1`、`P101-R2`、`P101-R3`、`P101-R4`
 - Remediation round: 3
-- Remediation budget: `EXHAUSTED_AFTER_USER_OVERRIDE`（2026-07-27）
-- Next action: 等待用户批准第 4 轮，仅处理 `P101-R4`
+- P101-R4 closure: 方案 C（控制器改任务卡验证命令顺序，commit `3f22b7a`），2026-07-28 控制器独立验证 PASS
+- Next action: 待集成到 `mcp`（需用户确认）
 - Default executor: Codex（GPT-5.6）
 - Depends on: 无
 - Parallel with: P1-02、P1-03
@@ -74,7 +74,7 @@ Pop-Location
 cargo test --workspace --all-features
 Push-Location apps/graphgateway-desktop
 npm run build
-cargo tauri build --no-bundle
+npx tauri build --no-bundle
 Pop-Location
 ```
 

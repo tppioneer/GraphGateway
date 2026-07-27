@@ -46,8 +46,15 @@
 
 ### P101-R4 — Medium / High confidence
 
-- Status: OPEN after remediation round 3
-  `9eeec40c7bf53c66f75f9e730c5f54286b3a9b5b`
+- Status: RESOLVED on 2026-07-28（控制器方案 C，不改实现代码）
+- Resolution: 控制者调整任务卡验证命令顺序（commit `3f22b7a`），先
+  `npm run build:sidecar` 生成 external binary，再跑
+  `cargo test --workspace`，使干净工作区验证流程可重复执行。
+- Closure evidence: 控制器在 worktree
+  `F:\develop\worktrees\GraphGateway-p1-01`（HEAD `9eeec40`）独立验证：
+  删除 `binaries/*.exe` 模拟干净状态后按新顺序执行全部验证命令，
+  `cargo test --workspace --all-features` 退出 0，全部测试通过。详见下方
+  2026-07-28 Verification evidence。
 - Location: `apps/graphgateway-desktop/src-tauri/tauri.conf.json:24-26`,
   `apps/graphgateway-desktop/package.json:8-12`
 - Evidence: 在实现工作区尚无被忽略的 `src-tauri/binaries/graphgateway-*.exe`
@@ -77,6 +84,21 @@
   工具窗口截断，后台编译进程随后正常退出
 - 复审结束后未发现属于该 worktree 的 `graphgateway.exe` 或
   `graphgateway-desktop.exe` 残留进程
+
+#### 2026-07-28 控制器独立验证（P101-R4 关闭，方案 C）
+
+- 干净状态：删除 `binaries/*.exe`（保留 `.gitkeep`），无 `graphgateway*` 残留进程
+- `cargo fmt --all -- --check`: PASS
+- `npm ci`: PASS（74 packages, 17s）
+- `npm run build:sidecar`: PASS（`cargo build -p graphgateway-server --release
+  --target x86_64-pc-windows-msvc` 9.40s，产出
+  `graphgateway-x86_64-pc-windows-msvc.exe` 2.48MB）
+- `cargo test --workspace --all-features`: PASS（所有测试通过）← R4 核心验证点
+- `npm run build`: PASS（vite build 922ms）
+- `npx tauri build --no-bundle`: PASS（`cargo build --release` 2m23s，产出
+  `target/release/graphgateway-desktop.exe`）
+- 命令差异：任务卡原写 `cargo tauri build`，实际环境 Tauri CLI 经 npm 安装
+  （`@tauri-apps/cli`），须用 `npx tauri build`；任务卡已同步修正
 
 ## GGW-P1-02
 
@@ -250,13 +272,12 @@
 
 | Task | Verdict | Open findings |
 | --- | --- | --- |
-| GGW-P1-01 | `CHANGES_REQUIRED` | P101-R4 |
+| GGW-P1-01 | `VERIFIED` | 无（P101-R4 方案 C 关闭） |
 | GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4 |
 | GGW-P1-03 | `PASS` | 无 |
 
-GGW-P1-03 已集成到 `mcp`；GGW-P1-01 与 GGW-P1-02 仍为
-`CHANGES_REQUIRED`，不得集成。GGW-P1-01 经用户批准完成第 3 轮整改，
-P101-R1/P101-R3 已关闭，但新增 P101-R4；不得自动发起第 4 轮，必须重新拆卡
-或由用户批准并记录显式例外。
+GGW-P1-03 已集成到 `mcp`。GGW-P1-01 经方案 C（控制器调整任务卡验证命令顺序，
+commit `3f22b7a`）关闭 P101-R4，2026-07-28 控制器独立验证全部 PASS，状态
+`VERIFIED`，待集成到 `mcp`。GGW-P1-02 仍为 `CHANGES_REQUIRED`，不得集成。
 GGW-P1-02 原两轮整改预算已用尽；用户于 2026-07-27 显式批准第三轮例外，
 仅允许处理 P102-R1/P102-R2/P102-R3/P102-R4，完成后必须重新独立复审。
