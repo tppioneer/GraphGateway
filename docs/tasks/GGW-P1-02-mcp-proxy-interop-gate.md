@@ -2,15 +2,16 @@
 
 ## 元数据
 
-- State: `VERIFIED`
+- State: `INTEGRATED`
 - Implementation HEAD: `1d180f442115e2d47361e905785531bf2c92f141`
+- Integration: merged into `mcp` at `1092678`（2026-07-28）
 - Tested code commit: `414632dacc819d4c9c36fc863a3c608cec8fffd5`
 - Remediation base: `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
 - Remediation round: `3/3`（用户于 2026-07-27 显式授权例外轮次）
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-02`
 - Open findings: 无
 - Closed findings: `P102-R1`、`P102-R2`、`P102-R3`、`P102-R4`、`P102-R5`（2026-07-28 round 3 独立复审，reviewer: Claude Code）
-- Next action: 待集成到 `mcp`（需用户确认）
+- Next action: 无
 - Executor: Claude Code
 - Model: `glm-5.2`
 - Delivery receipt: Claude Code JSON envelope

@@ -117,8 +117,9 @@
 - Head: `1d180f442115e2d47361e905785531bf2c92f141`
 - Tested code commit: `414632dacc819d4c9c36fc863a3c608cec8fffd5`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-02`
-- Review status: `PASS`（2026-07-28 round 3 独立复审通过，可集成）
+- Review status: `INTEGRATED`
 - Last verdict: `PASS`（round 3 独立复审 2026-07-28）
+- Integration: merged into `mcp` at `1092678`（2026-07-28），集成后验证 PASS_WITH_CONSTRAINTS
 - Remediation round 3: AUTHORIZED on 2026-07-27；executor Claude Code，
   model `glm-5.2`，base
   `59676cd8cc2b1026c1b165a6ea6ab09f8b691e52`
@@ -311,15 +312,17 @@
 | Task | Verdict | Open findings |
 | --- | --- | --- |
 | GGW-P1-01 | `INTEGRATED` | 无（P101-R4 方案 C 关闭） |
-| GGW-P1-02 | `PASS` | 无（P102-R1/R2/R3/R4 于 2026-07-28 round 3 独立复审关闭） |
+| GGW-P1-02 | `INTEGRATED` | 无（P102-R1/R2/R3/R4 于 2026-07-28 round 3 独立复审关闭） |
 | GGW-P1-03 | `PASS` | 无 |
 
 GGW-P1-03 已集成到 `mcp`。GGW-P1-01 经方案 C（控制器调整任务卡验证命令顺序，
 commit `3f22b7a`）关闭 P101-R4，2026-07-28 控制器独立验证全部 PASS，已合并到
 `mcp`（merge commit `d265d6f`），集成后 `cargo test --workspace --all-features`
 重新确认 PASS，状态 `INTEGRATED`。GGW-P1-02 经 2026-07-28 round 3 独立复审：P102-R1/R2/R3/R4 全部 RESOLVED，
-P102-R5 维持 RESOLVED，未发现新增 finding，可集成。
+P102-R5 维持 RESOLVED，未发现新增 finding，已集成。
 独立复审方法：代码逐一审查 + round2->round3 差异确认 + 累计差异范围核验 +
 独立完整复跑（node v24.14.1 / mcp-proxy 6.5.4 / gitnexus 1.6.9，38 tests：
 32 PASS、0 FAIL、0 SKIP、6 CONSTRAINT，结论 PASS_WITH_CONSTRAINTS，退出码 1）。
+集成后重新复跑确认：38 tests: 32 PASS, 0 FAIL, 0 SKIP, 6 CONSTRAINT，
+PASS_WITH_CONSTRAINTS，与 committed 报告一致。
 报告 Tested commit 精确为 `414632dacc819d4c9c36fc863a3c608cec8fffd5`，无绝对路径。
