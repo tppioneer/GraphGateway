@@ -67,12 +67,19 @@ loopback、token、Origin、job object、watch/rollback 语义。
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --workspace --all-features
-Set-Location apps/graphgateway-desktop
+Push-Location apps/graphgateway-desktop
 npm ci
+npm run build:sidecar
+Pop-Location
+cargo test --workspace --all-features
+Push-Location apps/graphgateway-desktop
 npm run build
 cargo tauri build --no-bundle
+Pop-Location
 ```
+
+先执行 `npm run build:sidecar` 生成 `src-tauri/binaries/graphgateway-{target}.exe`，
+再跑 `cargo test --workspace`，避免 build.rs 因 external binary 缺失而失败（关闭 P101-R4）。
 
 另执行卡内新增的 Windows Sidecar smoke test；该测试必须校验启动、ready、
 宿主退出后的进程回收以及日志不含启动 token。
