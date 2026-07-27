@@ -10,7 +10,8 @@
 
 - Head: `9eeec40c7bf53c66f75f9e730c5f54286b3a9b5b`
 - Worktree: `F:\develop\worktrees\GraphGateway-p1-01`
-- Verdict: `CHANGES_REQUIRED`
+- Verdict: `INTEGRATED`
+- Integration: merged into `mcp` at `d265d6f`（2026-07-28）
 
 ### P101-R1 — High / High confidence
 
@@ -99,6 +100,17 @@
   `target/release/graphgateway-desktop.exe`）
 - 命令差异：任务卡原写 `cargo tauri build`，实际环境 Tauri CLI 经 npm 安装
   （`@tauri-apps/cli`），须用 `npx tauri build`；任务卡已同步修正
+
+#### 2026-07-28 集成后验证（merge `d265d6f` 到 `mcp`）
+
+- `cargo fmt --all -- --check`: PASS
+- `npx tauri build --no-bundle`: PASS（`cargo build --release` 3m48s，产出
+  `target/release/graphgateway-desktop.exe`）
+- `cargo test --workspace --all-features`: PASS（所有测试通过，含 packaged_smoke
+  4/4）
+- 集成验证发现并修正第二个隐含依赖：`packaged_smoke` 测试需
+  `target/release/graphgateway-desktop.exe`，任务卡验证命令顺序已调整为
+  `npx tauri build --no-bundle` 在 `cargo test` 之前
 
 ## GGW-P1-02
 
@@ -272,12 +284,13 @@
 
 | Task | Verdict | Open findings |
 | --- | --- | --- |
-| GGW-P1-01 | `VERIFIED` | 无（P101-R4 方案 C 关闭） |
+| GGW-P1-01 | `INTEGRATED` | 无（P101-R4 方案 C 关闭） |
 | GGW-P1-02 | `CHANGES_REQUIRED` | P102-R1、P102-R2、P102-R3、P102-R4 |
 | GGW-P1-03 | `PASS` | 无 |
 
 GGW-P1-03 已集成到 `mcp`。GGW-P1-01 经方案 C（控制器调整任务卡验证命令顺序，
-commit `3f22b7a`）关闭 P101-R4，2026-07-28 控制器独立验证全部 PASS，状态
-`VERIFIED`，待集成到 `mcp`。GGW-P1-02 仍为 `CHANGES_REQUIRED`，不得集成。
+commit `3f22b7a`）关闭 P101-R4，2026-07-28 控制器独立验证全部 PASS，已合并到
+`mcp`（merge commit `d265d6f`），集成后 `cargo test --workspace --all-features`
+重新确认 PASS，状态 `INTEGRATED`。GGW-P1-02 仍为 `CHANGES_REQUIRED`，不得集成。
 GGW-P1-02 原两轮整改预算已用尽；用户于 2026-07-27 显式批准第三轮例外，
 仅允许处理 P102-R1/P102-R2/P102-R3/P102-R4，完成后必须重新独立复审。

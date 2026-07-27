@@ -2,14 +2,15 @@
 
 ## 元数据
 
-- State: `VERIFIED`
+- State: `INTEGRATED`
 - Implementation HEAD: `9eeec40c7bf53c66f75f9e730c5f54286b3a9b5b`
+- Integration: merged into `mcp` at `d265d6f`（2026-07-28）
 - Review: `docs/reviews/GGW-wave-A-review-2026-07-26.md#ggw-p1-01`
 - Open findings: 无
 - Closed findings: `P101-R1`、`P101-R2`、`P101-R3`、`P101-R4`
 - Remediation round: 3
 - P101-R4 closure: 方案 C（控制器改任务卡验证命令顺序，commit `3f22b7a`），2026-07-28 控制器独立验证 PASS
-- Next action: 待集成到 `mcp`（需用户确认）
+- Next action: 无
 - Default executor: Codex（GPT-5.6）
 - Depends on: 无
 - Parallel with: P1-02、P1-03
@@ -70,16 +71,16 @@ cargo fmt --all -- --check
 Push-Location apps/graphgateway-desktop
 npm ci
 npm run build:sidecar
-Pop-Location
-cargo test --workspace --all-features
-Push-Location apps/graphgateway-desktop
-npm run build
 npx tauri build --no-bundle
 Pop-Location
+cargo test --workspace --all-features
 ```
 
 先执行 `npm run build:sidecar` 生成 `src-tauri/binaries/graphgateway-{target}.exe`，
-再跑 `cargo test --workspace`，避免 build.rs 因 external binary 缺失而失败（关闭 P101-R4）。
+再执行 `npx tauri build --no-bundle` 生成 `target/release/graphgateway-desktop.exe`
+（其 `beforeBuildCommand` 会同时跑 `npm run build && npm run build:sidecar`，幂等），
+最后跑 `cargo test --workspace`，使 build.rs 的 external binary 依赖和 packaged_smoke
+的 desktop exe 依赖同时满足（关闭 P101-R4）。
 
 另执行卡内新增的 Windows Sidecar smoke test；该测试必须校验启动、ready、
 宿主退出后的进程回收以及日志不含启动 token。
