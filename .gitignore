@@ -55,6 +55,7 @@ pnpm-debug.log*
 !/.agents/skills/
 !/.agents/skills/**
 /.codex/
+.claude/
 .DS_Store
 Thumbs.db
 Desktop.ini
