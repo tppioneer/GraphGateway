@@ -2,12 +2,12 @@
 
 ## 元数据
 
-- State: `DRAFT`
+- State: `READY`
 - Default executor: Claude Code
 - Depends on: P1-03
 - Parallel with: 无。P1-05 与本任务都会修改根 `Cargo.toml` / `Cargo.lock`，
   必须在独立 worktree 中串行执行和集成
-- Expected HEAD: `TO_BE_SET_AFTER_TASK_CARD_CALIBRATION_COMMIT`
+- Expected HEAD: `03de937be89b90eb15f990cf1ae339eefc45d4c3`
 - Suggested branch: `codex/ggw-p1-04-sqlite-registry`
 - Suggested worktree: `F:\develop\worktrees\GraphGateway-p1-04`
 - Budget: 一次实现，最多两轮整改
