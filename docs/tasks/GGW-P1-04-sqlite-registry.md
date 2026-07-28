@@ -2,8 +2,9 @@
 
 ## 元数据
 
-- State: `READY`
+- State: `IMPLEMENTING`
 - Default executor: Claude Code
+- Executor model: `glm-5.2`
 - Depends on: P1-03
 - Parallel with: 无。P1-05 与本任务都会修改根 `Cargo.toml` / `Cargo.lock`，
   必须在独立 worktree 中串行执行和集成
