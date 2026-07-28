@@ -5,8 +5,9 @@
 - State: `DRAFT`
 - Default executor: Claude Code
 - Depends on: P1-03
-- Parallel with: P1-05（共同依赖已集成后）
-- Expected HEAD: `TO_BE_SET_AFTER_P1_03_INTEGRATION`
+- Parallel with: 无。P1-05 与本任务都会修改根 `Cargo.toml` / `Cargo.lock`，
+  必须在独立 worktree 中串行执行和集成
+- Expected HEAD: `TO_BE_SET_AFTER_TASK_CARD_CALIBRATION_COMMIT`
 - Suggested branch: `codex/ggw-p1-04-sqlite-registry`
 - Suggested worktree: `F:\develop\worktrees\GraphGateway-p1-04`
 - Budget: 一次实现，最多两轮整改
@@ -35,7 +36,8 @@ session 绑定不进入 SQLite。
 ## Allowed scope
 
 - 新增 `crates/graphgateway-storage/`
-- Workspace `Cargo.toml` / `Cargo.lock`
+- 根 `Cargo.toml`
+- 根 `Cargo.lock`
 - 存储测试、迁移文件和存储层说明
 
 ## Forbidden scope
@@ -59,11 +61,30 @@ session 绑定不进入 SQLite。
 cargo fmt --all -- --check
 cargo clippy -p graphgateway-storage --all-targets --all-features -- -D warnings
 cargo test -p graphgateway-storage --all-features
+
+Push-Location apps/graphgateway-desktop
+npm ci
+npm run build:sidecar
+npx tauri build --no-bundle
+Pop-Location
+
 cargo test --workspace --all-features
 ```
 
+全工作区测试对 Tauri 的 external binary 和已构建 desktop executable 有前置依赖。
+上述命令必须从仓库根目录开始按顺序执行，并能在无预存构建产物的干净 worktree
+中重复通过。
+
 ## Delivery contract
 
-返回 `AGENT_RESULT`：`DONE|BLOCKED`、完整提交 SHA、schema/迁移摘要、变更文件、
-验证结果、数据兼容风险。测试数据库必须使用临时目录并自动清理。
+返回且只返回一个完整 `AGENT_RESULT` 块：
 
+- `status` 只能是 `READY_FOR_REVIEW` 或 `BLOCKED`
+- `task_id`、执行器、完整 base/head commit SHA
+- schema/迁移摘要和变更文件清单
+- 每条验收标准的 `PASS|FAIL|NOT_RUN` 结果
+- 每条验证命令、结果和简明证据
+- 范围偏差、开放问题和数据兼容风险；没有时明确写 `NONE`
+
+测试数据库必须使用临时目录并自动清理。缺少提交、验证证据不完整、出现范围外
+修改或无法确认完整 base/head SHA 时，不得返回 `READY_FOR_REVIEW`。
